@@ -310,8 +310,8 @@ export type CapabilityEvent =
   | (EventEnvelope & { type: "usage/updated"; turn?: number; usage: UsageInfo })
   | (EventEnvelope & { type: "compaction/performed"; trigger: CompactionTrigger; preTokens?: number; postTokens?: number })
   | (EventEnvelope & { type: "file/changed"; path: string; kind: FileChangeKind; diff?: string })
-  | (EventEnvelope & { type: "subagent/started"; callId?: string; sessionId?: string; name?: string })
-  | (EventEnvelope & { type: "subagent/finished"; callId?: string; sessionId?: string; status: SubagentResultStatus; summary?: string })
+  | (EventEnvelope & { type: "subagent/started"; callId?: string; childSessionId?: string; name?: string })
+  | (EventEnvelope & { type: "subagent/finished"; callId?: string; childSessionId?: string; status: SubagentResultStatus; summary?: string })
   | (EventEnvelope & { type: "background/started"; taskId: string; title?: string })
   | (EventEnvelope & { type: "background/updated"; taskId: string; status: BackgroundRunStatus; title?: string; outputDelta?: string })
   | (EventEnvelope & { type: "background/finished"; taskId: string; status: SubagentResultStatus; output?: string });

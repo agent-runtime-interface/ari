@@ -43,8 +43,29 @@ research/                 证据基础：8 份源码级分报告 + 能力矩阵
   07-codex-app-server.md  08-related.md          capability-matrix.md
 packages/ari/             参考协议库（TypeScript；Node >= 22.6 原生 type stripping
                           直接运行，无构建步骤、无依赖）
+  src/harness.ts          Harness 侧助手：把 §8 不变量变成结构性保证
+  test/invariants.test.ts 29 个端到端断言这些不变量的测试（npm test）
+packages/mock-harness/    最小确定性 harness——conformance 的靶子
 LICENSE                   Apache-2.0
 ```
+
+## 怎么跑
+
+```bash
+npm test        # 不变量测试：真 harness 经由真客户端驱动
+npm run mock    # mock harness，在 stdin/stdout 上说 ARI 1.0
+```
+
+mock harness 是**关键词驱动**的，所以每条有意义的路径都能靠选择 prompt 文本走到——不需要模型，不需要 fixture：
+
+```
+echo hello        tool ls        approve         question
+slow 5000         throw          fail            oversized
+chunks 3          dangling       usage           file a.txt
+subagent          background     compact         reasoning hi
+```
+
+加 `--minimal` 让它把所有能力都声明为 false（报告 D8 里的最小 agent）。
 
 ## 怎么读
 
@@ -67,13 +88,13 @@ DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlo
 
 **ARI 1.0 已完成**——[SPEC.md](SPEC.md)：握手与版本协商、会话生命周期（new / resume / prompt / cancel / fork / list / shutdown）、turn 结算不变量、21 种事件、人机交互、完整错误码表（`-32001`…`-32008`）、扩展机制、安全考虑、一致性清单。
 
-**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。
+**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness，另有 29 个测试用真客户端端到端断言这些不变量。
 
-**下一步（本仓库内）**——mock harness、conformance 套件（附录 A）、参考 Shell，以及各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
+**下一步（本仓库内）**——conformance 套件（附录 A）做成可对**任意 harness 命令**运行的 CLI、参考 Shell，以及各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
 
 **明确不做**——工具体标准化（交给 MCP）、client tools 反转（ACP v2 已删除该面）、PTC 事件、compaction 控制、PTY 透传、子 agent 编排 API、后台任务控制 API。这些走 §12 的 `x-` 扩展机制，**不占版本号**。
 
-**尚未端到端验证。** 报告 D8 论证了一个 ~200 行、无账本/无 compaction/无 subagent 的 SimpleAgent 也能合规，但这份论证仍未被证明：用来检验它的 mock harness 与 conformance 套件都还没落地。
+**尚未对第三方 harness 验证。** 报告 D8 论证了一个 ~200 行、无账本/无 compaction/无 subagent 的 SimpleAgent 也能合规。mock harness 把这个论证变成了可执行的东西，但它仍是我们自己写的代码：在某个独立实现的 harness 通过 conformance 之前，这个论证只算验证了一半。
 
 ## 参与贡献
 

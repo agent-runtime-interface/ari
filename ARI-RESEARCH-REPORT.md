@@ -334,8 +334,8 @@ question/respond { sessionId, questionId,
 | `usage/updated` | `turn?, usage{inputTokens, outputTokens, cachedTokens?, reasoningTokens?, cost?}` | B9 |
 | `compaction/performed` | `trigger: "manual"\|"auto"\|"overflow", preTokens?, postTokens?`（cap: compactionEvents） | B10 |
 | `file/changed` | `path, kind: "create"\|"modify"\|"delete"\|"rename", diff?`（cap: fileChanges） | C3 |
-| `subagent/started` | `callId?, sessionId?, name?`（cap: subagents；只标准事件面，编排不在协议内） | [01][02][03][04][08] |
-| `subagent/finished` | `callId?, sessionId?, status: "success"\|"error"\|"cancelled", summary?`（cap: subagents） | 同上 |
+| `subagent/started` | `callId?, childSessionId?, name?`（cap: subagents；只标准事件面，编排不在协议内。**字段名不能叫 `sessionId`**，会覆盖信封的同名字段） | [01][02][03][04][08] |
+| `subagent/finished` | `callId?, childSessionId?, status: "success"\|"error"\|"cancelled", summary?`（cap: subagents） | 同上 |
 | `background/started` | `taskId, title?`（cap: backgroundTasks；无控制 API） | [01][02][03][08] |
 | `background/updated` | `taskId, status: "running"\|"pending", title?, outputDelta?`（cap: backgroundTasks） | 同上 |
 | `background/finished` | `taskId, status: "success"\|"error"\|"cancelled", output?`（cap: backgroundTasks） | 同上 |

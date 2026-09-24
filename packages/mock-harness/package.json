@@ -1,0 +1,14 @@
+{
+  "name": "@ari/mock-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal, deterministic ARI 1.0 harness. Used as the target for the conformance suite and the reference shell.",
+  "license": "Apache-2.0",
+  "bin": {
+    "ari-mock-harness": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  }
+}

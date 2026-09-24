@@ -132,10 +132,10 @@ export interface TurnContext {
   compactionPerformed(input: { trigger: CompactionTrigger; preTokens?: number; postTokens?: number }): void;
   fileChanged(input: { path: string; kind: FileChangeKind; diff?: string }): void;
 
-  subagentStarted(input?: { callId?: string; sessionId?: string; name?: string }): void;
+  subagentStarted(input?: { callId?: string; childSessionId?: string; name?: string }): void;
   subagentFinished(input: {
     callId?: string;
-    sessionId?: string;
+    childSessionId?: string;
     status: SubagentResultStatus;
     summary?: string;
   }): void;
@@ -349,7 +349,16 @@ export class AriHarness {
     }
 
     // The response must reach the peer before anything it causes (SPEC §7.9).
-    this.#write({ jsonrpc: "2.0", id: request.id, result: outcome.result });
+    try {
+      this.#write({ jsonrpc: "2.0", id: request.id, result: outcome.result });
+    } catch {
+      // A response too large to frame is an internal fault, not a dead connection.
+      this.#write({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: AriErrorCode.InternalError, message: "response exceeds the 1 MiB frame cap" },
+      });
+    }
     await this.#flush();
     if (outcome.after) await outcome.after();
   }
@@ -609,11 +618,13 @@ export class AriHarness {
   #resolveApproval(session: SessionState, approvalId: string, decision: ApprovalResolution): void {
     const pending = session.pending.get(approvalId);
     if (!pending) throw new AriInvariantError(`approval ${approvalId} is not pending`);
+    // Emit before mutating: if the frame is refused the interaction stays
+    // answerable rather than half-resolved. Emitting before resolving also keeps
+    // the delegate's follow-up events after the resolved event (SPEC §10.3).
+    this.#emit(session, { type: "approval/resolved", approvalId, decision });
     if (pending.timer) clearTimeout(pending.timer);
     session.pending.delete(approvalId);
     session.resolved.set(approvalId, decision);
-    // Emit before resolving so the delegate's follow-up events come after (SPEC §10.3).
-    this.#emit(session, { type: "approval/resolved", approvalId, decision });
     pending.resolve(decision as never);
   }
 
@@ -625,10 +636,10 @@ export class AriHarness {
   ): void {
     const pending = session.pending.get(questionId);
     if (!pending) throw new AriInvariantError(`question ${questionId} is not pending`);
+    this.#emit(session, { type: "question/resolved", questionId, outcome });
     if (pending.timer) clearTimeout(pending.timer);
     session.pending.delete(questionId);
     session.resolved.set(questionId, JSON.stringify(answers));
-    this.#emit(session, { type: "question/resolved", questionId, outcome });
     pending.resolve({ questionId, outcome, answers } as never);
   }
 
@@ -824,8 +835,8 @@ export class AriHarness {
         if (session.openToolCalls.has(callId)) {
           throw new AriInvariantError(`tool ${callId} is already open`);
         }
-        session.openToolCalls.set(callId, { name: input.name, status: "running" });
-        state.tools.add(callId);
+        // Emit before mutating: a refused frame must not leave the Shell
+        // believing a tool is open that it was never told about.
         this.#emit(session, {
           type: "tool/started",
           turn,
@@ -833,28 +844,29 @@ export class AriHarness {
           name: input.name,
           ...(input.input !== undefined ? { input: input.input } : {}),
         });
+        session.openToolCalls.set(callId, { name: input.name, status: "running" });
+        state.tools.add(callId);
         return callId;
       },
       toolUpdated: (input) => {
         live();
         const open = session.openToolCalls.get(input.callId);
         if (!open) throw new AriInvariantError(`tool ${input.callId} is not open`);
-        if (input.status) open.status = input.status;
+        const nextStatus = input.status ?? open.status;
         this.#emit(session, {
           type: "tool/updated",
           callId: input.callId,
-          status: input.status ?? open.status,
+          status: nextStatus,
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.outputDelta !== undefined ? { outputDelta: input.outputDelta } : {}),
         });
+        open.status = nextStatus;
       },
       toolCompleted: (input) => {
         live();
         if (!session.openToolCalls.has(input.callId)) {
           throw new AriInvariantError(`tool ${input.callId} is not open`);
         }
-        session.openToolCalls.delete(input.callId);
-        state.tools.delete(input.callId);
         this.#emit(session, {
           type: "tool/completed",
           callId: input.callId,
@@ -862,6 +874,8 @@ export class AriHarness {
           ...(input.output !== undefined ? { output: input.output } : {}),
           ...(input.meta !== undefined ? { meta: input.meta } : {}),
         });
+        session.openToolCalls.delete(input.callId);
+        state.tools.delete(input.callId);
       },
 
       requestApproval,
@@ -896,7 +910,7 @@ export class AriHarness {
         this.#emit(session, {
           type: "subagent/started",
           ...(input?.callId !== undefined ? { callId: input.callId } : {}),
-          ...(input?.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+          ...(input?.childSessionId !== undefined ? { childSessionId: input.childSessionId } : {}),
           ...(input?.name !== undefined ? { name: input.name } : {}),
         });
       },
@@ -906,7 +920,7 @@ export class AriHarness {
           type: "subagent/finished",
           status: input.status,
           ...(input.callId !== undefined ? { callId: input.callId } : {}),
-          ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+          ...(input.childSessionId !== undefined ? { childSessionId: input.childSessionId } : {}),
           ...(input.summary !== undefined ? { summary: input.summary } : {}),
         });
       },
@@ -1040,7 +1054,24 @@ export class AriHarness {
       }
     }
 
-    const event = { sessionId: session.sessionId, seq: session.seq, ...payload } as unknown as AriEvent;
+    // The envelope owns these three names; a payload must never shadow them
+    // (SPEC §9.1). This is what a child-session id in a subagent payload would
+    // otherwise do, silently retargeting the event at another session.
+    for (const reserved of ["sessionId", "seq"] as const) {
+      if (payload[reserved] !== undefined) {
+        throw new AriInvariantError(
+          `event payload for ${payload.type} may not set the reserved envelope field "${reserved}"`,
+        );
+      }
+    }
+
+    // Size-check before committing anything. A refused frame must not consume a
+    // seq, otherwise the stream develops a gap (SPEC §4.2 + §9.1).
+    // Envelope fields are spread last so they always win.
+    const event = { ...payload, sessionId: session.sessionId, seq: session.seq } as unknown as AriEvent;
+    const frame = { jsonrpc: "2.0", method: "event", params: event };
+    encodeFrame(frame);
+
     session.seq += 1;
 
     if (this.capabilities.replay) {
@@ -1050,7 +1081,7 @@ export class AriHarness {
       }
     }
 
-    this.#write({ jsonrpc: "2.0", method: "event", params: event });
+    this.#enqueue(frame);
   }
 
   #replay(session: SessionState, since: number | undefined): SessionResumeResult {
@@ -1098,16 +1129,16 @@ export class AriHarness {
   // ── writing ───────────────────────────────────────────────────────────
 
   /**
-   * Size-check synchronously (so an oversized event fails at its emit site) and
-   * append to the serialized write chain.
+   * Size-check synchronously (so an oversized message fails at its call site)
+   * and then enqueue it.
    */
   #write(message: unknown): void {
-    try {
-      encodeFrame(message);
-    } catch (error) {
-      this.writeError ??= error instanceof Error ? error : new Error(String(error));
-      throw error;
-    }
+    encodeFrame(message);
+    this.#enqueue(message);
+  }
+
+  /** Append to the serialized write chain, without a size check. */
+  #enqueue(message: unknown): void {
     this.writeChain = this.writeChain
       .then(() => this.writer?.(message))
       .then(() => undefined)

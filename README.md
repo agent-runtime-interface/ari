@@ -43,8 +43,30 @@ research/                 evidence base: 8 source-level sub-reports + capability
   07-codex-app-server.md  08-related.md          capability-matrix.md
 packages/ari/             reference protocol library (TypeScript; runs directly on Node >= 22.6
                           via native type stripping — no build step, no dependencies)
+  src/harness.ts          Harness-side helper: turns the §8 invariants into structure
+  test/invariants.test.ts 29 tests asserting those invariants end to end (npm test)
+packages/mock-harness/    a minimal deterministic harness — the conformance target
 LICENSE                   Apache-2.0
 ```
+
+## Running it
+
+```bash
+npm test        # invariant tests: a real harness driven through a real client
+npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
+```
+
+The mock harness is keyword-driven, so every interesting path can be exercised by
+choosing the prompt text — no model, no fixtures:
+
+```
+echo hello        tool ls        approve         question
+slow 5000         throw          fail            oversized
+chunks 3          dangling       usage           file a.txt
+subagent          background     compact         reasoning hi
+```
+
+Pass `--minimal` to make it declare every capability false (report D8's minimal agent).
 
 ## How to read
 
@@ -71,13 +93,13 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **ARI 1.0 is complete** — [SPEC.md](SPEC.md): handshake and version negotiation, session lifecycle (new / resume / prompt / cancel / fork / list / shutdown), turn settlement invariants, 21 event kinds, human interaction, the full error-code table (`-32001`…`-32008`), extension mechanism, security considerations, conformance checklist.
 
-**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention.
+**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper, and 29 tests drive it through a real client to assert the invariants end to end.
 
-**Next (in this repository)** — a mock harness, the conformance suite (Appendix A), a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
+**Next (in this repository)** — the conformance suite (Appendix A) as a CLI that can run against any harness command, a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
-**Not yet validated end-to-end.** Report D8 argues that a ~200-line SimpleAgent with no ledger, no compaction, and no subagent can still be conformant. That claim is still unproven: the mock harness and the conformance suite that would test it have not landed yet.
+**Not yet validated against a third-party harness.** Report D8 argues that a ~200-line SimpleAgent with no ledger, no compaction, and no subagent can still be conformant. The mock harness is that argument made executable, but it is still our own code: until an independently written harness passes the conformance suite, the claim is only half tested.
 
 ## Contributing
 

@@ -23,7 +23,17 @@ import {
 
 // ── a controllable harness ──────────────────────────────────────────────
 
-type Mode = "simple" | "gated" | "approval" | "cancel" | "danglingTool" | "question" | "throw";
+type Mode =
+  | "simple"
+  | "gated"
+  | "approval"
+  | "cancel"
+  | "danglingTool"
+  | "question"
+  | "throw"
+  | "oversized"
+  | "subagent"
+  | "shadow";
 
 interface Rig {
   client: AriClient;
@@ -90,6 +100,26 @@ function makeRig(options?: {
         }
         case "throw": {
           throw new AriError(-32000, "delegate exploded");
+        }
+        case "oversized": {
+          // One event above the 1 MiB frame cap. The helper must refuse the frame
+          // *without* consuming a seq, or the stream would develop a gap.
+          const callId = ctx.toolStarted({ name: "shell" });
+          ctx.toolCompleted({ callId, status: "success", output: "x".repeat(1_100_000) });
+          return "end_turn";
+        }
+        case "subagent": {
+          ctx.subagentStarted({ childSessionId: "s_child", name: "worker" });
+          ctx.subagentFinished({ childSessionId: "s_child", status: "success", summary: "done" });
+          ctx.messageDelta("child done");
+          return "end_turn";
+        }
+        case "shadow": {
+          // Bypass the types to try to shadow the envelope's sessionId, which
+          // would silently retarget the event at another session.
+          const loose = ctx as unknown as { subagentStarted(input: unknown): void };
+          loose.subagentStarted({ sessionId: "s_somewhere_else" });
+          return "end_turn";
         }
         default:
           return "end_turn";
@@ -440,6 +470,29 @@ test("a question round-trip reports answered, and [] declines", async () => {
   rig.client.close();
 });
 
+test("a refused oversized frame does not consume a seq (regression)", async () => {
+  const rig = makeRig();
+  await rig.client.initialize();
+  const { sessionId } = await rig.client.newSession();
+  rig.setMode("oversized");
+
+  await rig.client.prompt(sessionId, "emit something huge");
+  await rig.waitFor((events) => ofType(events, "turn/completed").length === 1, "turn/completed");
+
+  // The oversized tool/completed must not reach the wire. Because the tool was
+  // already announced, the helper closes it itself before settling, so exactly
+  // one (small) tool/completed is expected.
+  const completed = ofType(rig.events, "tool/completed");
+  assert.equal(completed.length, 1, "the oversized event must be replaced by the auto-close");
+  assert.equal((completed[0] as { status: string }).status, "error");
+  assert.ok(completed[0]!.seq < (ofType(rig.events, "turn/completed")[0] as AriEvent).seq);
+
+  assertContiguousSeq(rig.events);
+  assert.deepEqual(rig.client.gaps, [], "no seq discontinuity may reach the Shell");
+  assert.equal(rig.client.getSession(sessionId)?.openToolCalls.size, 0);
+  rig.client.close();
+});
+
 // ── §7.4 cancel ─────────────────────────────────────────────────────────
 
 test("cancel settles the in-flight turn as cancelled and drops queued inputs", async () => {
@@ -592,5 +645,65 @@ test("fork at a non-boundary turn is -32602", async () => {
     () => rig.client.forkSession(sessionId, 7),
     (error: unknown) => error instanceof AriError && error.code === -32602,
   );
+  rig.client.close();
+});
+
+// ── envelope integrity (§9.1) ───────────────────────────────────────────
+
+test("a subagent event keeps the envelope sessionId and reports the child separately", async () => {
+  const rig = makeRig();
+  await rig.client.initialize();
+  const { sessionId } = await rig.client.newSession();
+  rig.setMode("subagent");
+
+  await rig.client.prompt(sessionId, "spawn a child");
+  await rig.waitFor((events) => ofType(events, "turn/completed").length === 1, "turn/completed");
+
+  const started = ofType(rig.events, "subagent/started")[0] as {
+    sessionId: string;
+    childSessionId?: string;
+  };
+  assert.equal(started.sessionId, sessionId, "the envelope sessionId must not be shadowed");
+  assert.equal(started.childSessionId, "s_child");
+  assertContiguousSeq(rig.events);
+  assert.deepEqual(rig.client.gaps, []);
+  rig.client.close();
+});
+
+test("the ctx API cannot retarget an event at another session (regression)", async () => {
+  const rig = makeRig();
+  await rig.client.initialize();
+  const { sessionId } = await rig.client.newSession();
+  rig.setMode("shadow");
+
+  await rig.client.prompt(sessionId, "try to retarget the event");
+  await rig.waitFor((events) => ofType(events, "turn/completed").length === 1, "turn/completed");
+
+  // `subagentStarted` reads only its declared fields, so a rogue `sessionId` is
+  // dropped instead of shadowing the envelope (SPEC §9.1). The guard inside emit
+  // is defence-in-depth behind that.
+  const started = ofType(rig.events, "subagent/started")[0] as {
+    sessionId: string;
+    childSessionId?: string;
+  };
+  assert.equal(started.sessionId, sessionId, "the event belongs to the emitting session");
+  assert.equal(started.childSessionId, undefined, "the rogue field must be dropped, not forwarded");
+  assert.equal(ofType(rig.events, "session/error").length, 0);
+  assertContiguousSeq(rig.events);
+  assert.deepEqual(rig.client.gaps, [], "no event may be retargeted at another session");
+  rig.client.close();
+});
+
+test("a refused frame leaves no tool open on the Shell (regression)", async () => {
+  const rig = makeRig();
+  await rig.client.initialize();
+  const { sessionId } = await rig.client.newSession();
+  rig.setMode("oversized");
+
+  await rig.client.prompt(sessionId, "emit something huge");
+  await rig.waitFor((events) => ofType(events, "turn/completed").length === 1, "turn/completed");
+
+  const state = rig.client.getSession(sessionId);
+  assert.equal(state?.openToolCalls.size, 0, "the Shell must not be left with a phantom open tool");
   rig.client.close();
 });

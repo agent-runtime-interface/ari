@@ -376,6 +376,8 @@ The following invariants **MUST** hold:
 | `turn` | integer? | **Starts at 1**, monotonic +1 per session |
 | `messageId` / `callId` / `approvalId` / `questionId` / `taskId` | string | Opaque. Prefix `m_` / `t_` / `ap_` / `q_` / `bg_` + ULID recommended |
 
+- **The envelope fields `sessionId`, `seq` and `type` are reserved.** A payload **MUST NOT** contain a field of the same name, and a Harness **MUST** reject such an event rather than let it shadow the envelope. (This is not hypothetical: a child-session identifier in a `subagent/*` payload is named `childSessionId` for exactly this reason — see §9.3.)
+
 ### 9.2 Required Events (10)
 
 | type | payload | Description |
@@ -403,13 +405,15 @@ The tool state machine converges to: **`started → (updated*) → completed`**.
 | `usage/updated` | `usage` | `turn?, usage{inputTokens, outputTokens, cachedTokens?, reasoningTokens?, cost?}` |
 | `compaction/performed` | `compactionEvents` | `trigger:"manual"\|"auto"\|"overflow", preTokens?, postTokens?` |
 | `file/changed` | `fileChanges` | `path, kind:"create"\|"modify"\|"delete"\|"rename", diff?` |
-| `subagent/started` | `subagents` | `callId?, sessionId?, name?` |
-| `subagent/finished` | `subagents` | `callId?, sessionId?, status:"success"\|"error"\|"cancelled", summary?` |
+| `subagent/started` | `subagents` | `callId?, childSessionId?, name?` |
+| `subagent/finished` | `subagents` | `callId?, childSessionId?, status:"success"\|"error"\|"cancelled", summary?` |
 | `background/started` | `backgroundTasks` | `taskId, title?` |
 | `background/updated` | `backgroundTasks` | `taskId, status:"running"\|"pending", title?, outputDelta?` |
 | `background/finished` | `backgroundTasks` | `taskId, status:"success"\|"error"\|"cancelled", output?` |
 
-**On subagents**: ARI 1.0 standardizes only the **event surface** — "a child agent is running / has finished". Child-agent **orchestration** (spawn/send/wait/close) is **not** part of ARI. If the Harness exposes a child session, `subagent/started.sessionId` gives its `sessionId`, and the Shell **MAY** attach to that child session via `session/resume`; when not exposed, the field is absent and the Shell **MUST NOT** assume it can attach.
+**On subagents**: ARI 1.0 standardizes only the **event surface** — "a child agent is running / has finished". Child-agent **orchestration** (spawn/send/wait/close) is **not** part of ARI. If the Harness exposes a child session, `subagent/started.childSessionId` gives its `sessionId`, and the Shell **MAY** attach to that child session via `session/resume`; when not exposed, the field is absent and the Shell **MUST NOT** assume it can attach.
+
+Note that the field is named `childSessionId`, **not** `sessionId`: every event envelope already carries the `sessionId` of the session the event belongs to (SPEC §9.1), and a payload field **MUST NOT** shadow an envelope field.
 
 **On background**: likewise only the event surface is standardized; no control API (start/stop/query) is provided. Scenarios that need control use the extension mechanism (§12).
 
