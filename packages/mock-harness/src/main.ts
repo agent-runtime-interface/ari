@@ -55,14 +55,20 @@ import {
 
 interface MockOptions {
   capabilities: AgentCapabilities;
+  queueLimit?: number;
 }
 
 function parseArgs(argv: readonly string[]): MockOptions {
   let capabilities: AgentCapabilities = { ...ALL_CAPABILITIES };
+  let queueLimit: number | undefined;
 
   for (const arg of argv) {
     if (arg === "--minimal") {
       capabilities = { ...NO_CAPABILITIES };
+      continue;
+    }
+    if (arg.startsWith("--queue-limit=")) {
+      queueLimit = Number(arg.slice("--queue-limit=".length));
       continue;
     }
     if (arg.startsWith("--caps-off=")) {
@@ -84,7 +90,7 @@ function parseArgs(argv: readonly string[]): MockOptions {
     }
   }
 
-  return { capabilities };
+  return { capabilities, ...(queueLimit !== undefined ? { queueLimit } : {}) };
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
@@ -317,13 +323,14 @@ const delegate: HarnessDelegate = {
 
 // ── main ────────────────────────────────────────────────────────────────
 
-const { capabilities } = parseArgs(process.argv.slice(2));
+const { capabilities, queueLimit } = parseArgs(process.argv.slice(2));
 
 const harness = new AriHarness({
   agentInfo: { name: "MockHarness", version: "1.0.0" },
   capabilities,
   delegate,
   cancelGraceMs: 1000,
+  ...(queueLimit !== undefined ? { queueLimit } : {}),
 });
 
 log(`capabilities: ${Object.entries(capabilities).filter(([, on]) => on).map(([k]) => k).join(", ") || "(none)"}`);

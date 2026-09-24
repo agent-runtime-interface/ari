@@ -44,16 +44,21 @@ research/                 证据基础：8 份源码级分报告 + 能力矩阵
 packages/ari/             参考协议库（TypeScript；Node >= 22.6 原生 type stripping
                           直接运行，无构建步骤、无依赖）
   src/harness.ts          Harness 侧助手：把 §8 不变量变成结构性保证
-  test/invariants.test.ts 29 个端到端断言这些不变量的测试（npm test）
+  test/invariants.test.ts 29 个端到端断言这些不变量的测试
 packages/mock-harness/    最小确定性 harness——conformance 的靶子
+packages/conformance/     把附录 A 清单做成 CLI，可对任意 harness 运行
+  test/broken-harness.ts  一个故意违规的 harness，用来证明套件有牙齿
 LICENSE                   Apache-2.0
 ```
 
 ## 怎么跑
 
 ```bash
-npm test        # 不变量测试：真 harness 经由真客户端驱动
+npm test        # 41 个测试：不变量，加上"conformance 确实能抓违规"的证明
 npm run mock    # mock harness，在 stdin/stdout 上说 ARI 1.0
+
+# 用附录 A 清单检查任意 harness：
+node packages/conformance/src/main.ts -- node path/to/my-harness.js
 ```
 
 mock harness 是**关键词驱动**的，所以每条有意义的路径都能靠选择 prompt 文本走到——不需要模型，不需要 fixture：
@@ -66,6 +71,20 @@ subagent          background     compact         reasoning hi
 ```
 
 加 `--minimal` 让它把所有能力都声明为 false（报告 D8 里的最小 agent）。
+
+### Conformance
+
+套件检查两类性质。**观测型**不需要配合——发一条无害 prompt，然后断言回来的东西：seq 密度、每 turn 恰好一次结算、能力门控、错误码、帧上限、stdout 纯净性。**探针型**需要把 harness 驱动到特定路径，所以由 harness 作者声明怎么触发：
+
+```bash
+node packages/conformance/src/main.ts \
+  --probe-approval approve --probe-question question \
+  --probe-slow "slow 5000" --probe-error throw \
+  --queue-limit 3 \
+  -- node packages/mock-harness/src/main.ts --queue-limit=3
+```
+
+没提供探针的检查会报 **SKIP 并说明该加哪个参数**——既不会静默通过，也不会因为"套件没法触发"而误判失败。附录 A 的第 23–25 条属于 Shell 侧，对 harness 面向的工具不在范围内；`packages/ari/test` 已为参考客户端覆盖了它们。
 
 ## 怎么读
 
@@ -88,13 +107,13 @@ DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlo
 
 **ARI 1.0 已完成**——[SPEC.md](SPEC.md)：握手与版本协商、会话生命周期（new / resume / prompt / cancel / fork / list / shutdown）、turn 结算不变量、21 种事件、人机交互、完整错误码表（`-32001`…`-32008`）、扩展机制、安全考虑、一致性清单。
 
-**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness，另有 29 个测试用真客户端端到端断言这些不变量。
+**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness。`packages/conformance/` 把附录 A 清单做成可对**任意 harness 命令**运行的 CLI，其中 `test/broken-harness.ts` 是一个故意违规的 harness，用来证明套件确实抓得住违规而不是一律通过。
 
-**下一步（本仓库内）**——conformance 套件（附录 A）做成可对**任意 harness 命令**运行的 CLI、参考 Shell，以及各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
+**下一步（本仓库内）**——参考 Shell，以及各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
 
 **明确不做**——工具体标准化（交给 MCP）、client tools 反转（ACP v2 已删除该面）、PTC 事件、compaction 控制、PTY 透传、子 agent 编排 API、后台任务控制 API。这些走 §12 的 `x-` 扩展机制，**不占版本号**。
 
-**尚未对第三方 harness 验证。** 报告 D8 论证了一个 ~200 行、无账本/无 compaction/无 subagent 的 SimpleAgent 也能合规。mock harness 把这个论证变成了可执行的东西，但它仍是我们自己写的代码：在某个独立实现的 harness 通过 conformance 之前，这个论证只算验证了一半。
+**尚未对第三方 harness 验证。** mock harness 是报告 D8"最小 harness 也能合规"那个论证的可执行版本，但它仍是我们自己写的代码，而且它是套件至今唯一跑过的 harness。在某个独立实现的 harness 通过 `packages/conformance` 之前，这个论证只算验证了一半。
 
 ## 参与贡献
 

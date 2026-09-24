@@ -1,0 +1,14 @@
+{
+  "name": "@ari/conformance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Run the ARI 1.0 Appendix A conformance checklist against any harness command.",
+  "license": "Apache-2.0",
+  "bin": {
+    "ari-conformance": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  }
+}

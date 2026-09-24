@@ -14,7 +14,9 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "test": "node --test packages/ari/test/invariants.test.ts",
+    "test": "node --test packages/ari/test/invariants.test.ts packages/conformance/test/teeth.test.ts",
+    "test:invariants": "node --test packages/ari/test/invariants.test.ts",
+    "test:conformance": "node --test packages/conformance/test/teeth.test.ts",
     "mock": "node packages/mock-harness/src/main.ts",
     "shell": "node packages/shell/src/main.ts",
     "conformance": "node packages/conformance/src/main.ts",

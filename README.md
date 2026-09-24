@@ -44,16 +44,21 @@ research/                 evidence base: 8 source-level sub-reports + capability
 packages/ari/             reference protocol library (TypeScript; runs directly on Node >= 22.6
                           via native type stripping — no build step, no dependencies)
   src/harness.ts          Harness-side helper: turns the §8 invariants into structure
-  test/invariants.test.ts 29 tests asserting those invariants end to end (npm test)
+  test/invariants.test.ts 29 tests asserting those invariants end to end
 packages/mock-harness/    a minimal deterministic harness — the conformance target
+packages/conformance/     the Appendix A checklist as a CLI, runnable against any harness
+  test/broken-harness.ts  a deliberately non-conformant harness, to prove the suite has teeth
 LICENSE                   Apache-2.0
 ```
 
 ## Running it
 
 ```bash
-npm test        # invariant tests: a real harness driven through a real client
+npm test        # 41 tests: invariants, plus proof that conformance detects violations
 npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
+
+# Check any harness against the Appendix A checklist:
+node packages/conformance/src/main.ts -- node path/to/my-harness.js
 ```
 
 The mock harness is keyword-driven, so every interesting path can be exercised by
@@ -67,6 +72,28 @@ subagent          background     compact         reasoning hi
 ```
 
 Pass `--minimal` to make it declare every capability false (report D8's minimal agent).
+
+### Conformance
+
+The suite checks two kinds of property. **Observational** checks need no
+cooperation — they drive a harmless prompt and assert what comes back: seq
+density, one settlement per turn, capability gating, error codes, frame limits,
+stdout purity. **Probe** checks need the harness to be driven into a specific
+path, so the harness author declares how:
+
+```bash
+node packages/conformance/src/main.ts \
+  --probe-approval approve --probe-question question \
+  --probe-slow "slow 5000" --probe-error throw \
+  --queue-limit 3 \
+  -- node packages/mock-harness/src/main.ts --queue-limit=3
+```
+
+A probe that was not supplied makes its check report **SKIP with the flag that
+would enable it** — never a silent pass, and never a failure for something the
+suite could not provoke. Items 23–25 of Appendix A are Shell-side and therefore
+out of scope for a harness-facing tool; `packages/ari/test` covers them for the
+reference client.
 
 ## How to read
 
@@ -93,13 +120,13 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **ARI 1.0 is complete** — [SPEC.md](SPEC.md): handshake and version negotiation, session lifecycle (new / resume / prompt / cancel / fork / list / shutdown), turn settlement invariants, 21 event kinds, human interaction, the full error-code table (`-32001`…`-32008`), extension mechanism, security considerations, conformance checklist.
 
-**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper, and 29 tests drive it through a real client to assert the invariants end to end.
+**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper. `packages/conformance/` turns the Appendix A checklist into a CLI that runs against **any** harness command, and `packages/conformance/test/broken-harness.ts` is a deliberately non-conformant harness used to prove the suite detects violations rather than passing everything.
 
-**Next (in this repository)** — the conformance suite (Appendix A) as a CLI that can run against any harness command, a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
+**Next (in this repository)** — a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
-**Not yet validated against a third-party harness.** Report D8 argues that a ~200-line SimpleAgent with no ledger, no compaction, and no subagent can still be conformant. The mock harness is that argument made executable, but it is still our own code: until an independently written harness passes the conformance suite, the claim is only half tested.
+**Not yet validated against a third-party harness.** The mock harness is report D8's "a minimal harness can be conformant" argument made executable, but it is still our own code, and it is the only harness the suite has been run against. Until an independently written harness passes `packages/conformance`, that claim remains half tested.
 
 ## Contributing
 
