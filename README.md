@@ -48,18 +48,47 @@ packages/ari/             reference protocol library (TypeScript; runs directly 
 packages/mock-harness/    a minimal deterministic harness — the conformance target
 packages/conformance/     the Appendix A checklist as a CLI, runnable against any harness
   test/broken-harness.ts  a deliberately non-conformant harness, to prove the suite has teeth
+packages/shell/           the reference shell: drives any harness, knows none of them
+  test/shell.test.ts      Appendix A items 23–25 (Shell-side) plus a CLI smoke test
 LICENSE                   Apache-2.0
 ```
 
 ## Running it
 
 ```bash
-npm test        # 41 tests: invariants, plus proof that conformance detects violations
+npm test        # 54 tests: invariants, conformance teeth, and Shell-side checks
 npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
+
+# Drive any harness with the reference shell:
+node packages/shell/src/main.ts -- node path/to/my-harness.js
 
 # Check any harness against the Appendix A checklist:
 node packages/conformance/src/main.ts -- node path/to/my-harness.js
 ```
+
+### The shell
+
+`packages/shell` is the point of the whole exercise: it renders the event stream,
+answers approvals and questions, and cancels on Ctrl-C — and **contains no branch
+on which harness is on the other end**. It contains no occurrence of any harness
+name at all. If that is not enough to drive a harness, the protocol is wrong, not
+the shell.
+
+```bash
+# one prompt, then exit
+node packages/shell/src/main.ts --prompt "list the files" -- node packages/mock-harness/src/main.ts
+
+# interactive: prompts from stdin; a pending interaction consumes the next line
+node packages/shell/src/main.ts -- node packages/mock-harness/src/main.ts
+
+# answer approvals automatically instead of asking
+node packages/shell/src/main.ts --policy allow -- node packages/mock-harness/src/main.ts
+```
+
+Flags: `--prompt <text>`, `--policy ask|allow|deny`, `--no-reasoning`,
+`--show-status`, `--raw`. Approval decisions are always validated against the
+`options` the harness actually offered (Appendix A item 24), so a shell can never
+send a decision that was not on the menu.
 
 The mock harness is keyword-driven, so every interesting path can be exercised by
 choosing the prompt text — no model, no fixtures:
@@ -120,9 +149,9 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **ARI 1.0 is complete** — [SPEC.md](SPEC.md): handshake and version negotiation, session lifecycle (new / resume / prompt / cancel / fork / list / shutdown), turn settlement invariants, 21 event kinds, human interaction, the full error-code table (`-32001`…`-32008`), extension mechanism, security considerations, conformance checklist.
 
-**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper. `packages/conformance/` turns the Appendix A checklist into a CLI that runs against **any** harness command, and `packages/conformance/test/broken-harness.ts` is a deliberately non-conformant harness used to prove the suite detects violations rather than passing everything.
+**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper. `packages/conformance/` turns the Appendix A checklist into a CLI that runs against **any** harness command, and `packages/conformance/test/broken-harness.ts` is a deliberately non-conformant harness used to prove the suite detects violations rather than passing everything. `packages/shell/` is the reference shell, which drives the mock harness with no harness-specific code in it.
 
-**Next (in this repository)** — a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
+**Next (in this repository)** — adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from.
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 

@@ -48,18 +48,40 @@ packages/ari/             参考协议库（TypeScript；Node >= 22.6 原生 typ
 packages/mock-harness/    最小确定性 harness——conformance 的靶子
 packages/conformance/     把附录 A 清单做成 CLI，可对任意 harness 运行
   test/broken-harness.ts  一个故意违规的 harness，用来证明套件有牙齿
+packages/shell/           参考壳：能驱动任意 harness，却不认识任何一个
+  test/shell.test.ts      附录 A 第 23–25 条（Shell 侧）+ CLI 冒烟测试
 LICENSE                   Apache-2.0
 ```
 
 ## 怎么跑
 
 ```bash
-npm test        # 41 个测试：不变量，加上"conformance 确实能抓违规"的证明
+npm test        # 54 个测试：不变量、conformance 的牙齿、Shell 侧检查
 npm run mock    # mock harness，在 stdin/stdout 上说 ARI 1.0
+
+# 用参考壳驱动任意 harness：
+node packages/shell/src/main.ts -- node path/to/my-harness.js
 
 # 用附录 A 清单检查任意 harness：
 node packages/conformance/src/main.ts -- node path/to/my-harness.js
 ```
+
+### 壳
+
+`packages/shell` 是整个练习的目的所在：它渲染事件流、应答审批与提问、Ctrl-C 取消——而且**代码里没有任何一处根据对端是哪个 harness 分支**，连一个 harness 名字都不出现。如果这样还驱动不了一个 harness，那是协议错了，不是壳错了。
+
+```bash
+# 发一条 prompt 然后退出
+node packages/shell/src/main.ts --prompt "列出文件" -- node packages/mock-harness/src/main.ts
+
+# 交互模式：prompt 从 stdin 读；有挂起交互时，下一行就是答复
+node packages/shell/src/main.ts -- node packages/mock-harness/src/main.ts
+
+# 自动应答审批，而不是问人
+node packages/shell/src/main.ts --policy allow -- node packages/mock-harness/src/main.ts
+```
+
+参数：`--prompt <text>`、`--policy ask|allow|deny`、`--no-reasoning`、`--show-status`、`--raw`。审批决策**始终会对照 harness 实际给出的 `options` 校验**（附录 A 第 24 条），所以壳不可能发出菜单上没有的决策。
 
 mock harness 是**关键词驱动**的，所以每条有意义的路径都能靠选择 prompt 文本走到——不需要模型，不需要 fixture：
 
@@ -107,9 +129,9 @@ DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlo
 
 **ARI 1.0 已完成**——[SPEC.md](SPEC.md)：握手与版本协商、会话生命周期（new / resume / prompt / cancel / fork / list / shutdown）、turn 结算不变量、21 种事件、人机交互、完整错误码表（`-32001`…`-32008`）、扩展机制、安全考虑、一致性清单。
 
-**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness。`packages/conformance/` 把附录 A 清单做成可对**任意 harness 命令**运行的 CLI，其中 `test/broken-harness.ts` 是一个故意违规的 harness，用来证明套件确实抓得住违规而不是一律通过。
+**参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness。`packages/conformance/` 把附录 A 清单做成可对**任意 harness 命令**运行的 CLI，其中 `test/broken-harness.ts` 是一个故意违规的 harness，用来证明套件确实抓得住违规而不是一律通过。`packages/shell/` 是参考壳，它能驱动 mock harness 且内部没有任何 harness 专有代码。
 
-**下一步（本仓库内）**——参考 Shell，以及各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
+**下一步（本仓库内）**——各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP），让壳能驱动真实 runtime。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。SPEC 附录 B 就是工作清单。
 
 **明确不做**——工具体标准化（交给 MCP）、client tools 反转（ACP v2 已删除该面）、PTC 事件、compaction 控制、PTY 透传、子 agent 编排 API、后台任务控制 API。这些走 §12 的 `x-` 扩展机制，**不占版本号**。
 

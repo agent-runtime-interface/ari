@@ -9,8 +9,8 @@
 
 **ARI (Agent Runtime Interface)** 是一套让「一个壳（Shell）驱动任意 Coding Agent Harness」的运行时协议。仓库同时是规范 + 参考实现 + conformance 套件，已开源在 **https://github.com/agent-runtime-interface/ari**（public）。
 
-**当前进度**：规范（ARI 1.0）完成 · 协议库完成 · mock harness 完成 · conformance 套件完成（24 条检查）· 41 个测试全绿。
-**下一步**：`packages/shell`（参考壳），然后是 6 个适配层。
+**当前进度**：规范（ARI 1.0）完成 · 协议库完成 · mock harness 完成 · conformance 套件完成（24 条检查）· 参考壳完成 · **54 个测试全绿**。
+**下一步**：6 个适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP），建议从 `adapter-dsh` 开始。
 
 技术栈：**TypeScript，零依赖**，Node ≥ 22.6 原生 type stripping，直接 `node xxx.ts` 跑，不需要 `npm install`、不需要构建。
 
@@ -32,8 +32,8 @@ ARI 的主张：**这些 runtime 内部共享同一套运行时抽象**，值得
 | 参考协议库 `packages/ari` | ✅ 完成 |
 | 参考 harness `packages/mock-harness` | ✅ 完成 |
 | conformance 套件 `packages/conformance` | ✅ 完成 |
-| **参考壳 `packages/shell`** | ❌ **未开始** |
-| **6 个适配层**（DSH/Codex/ZCode/OpenCode/Pi/ACP） | ❌ **未开始** |
+| 参考壳 `packages/shell` | ✅ **完成**（2026-09-24 23:2x，见 §2 末尾） |
+| **6 个适配层**（DSH/Codex/ZCode/OpenCode/Pi/ACP） | ❌ **未开始 ← 下一步** |
 | 第三方独立实现的 harness 通过 conformance | ❌ 未发生 |
 
 ### 完成标准
@@ -95,16 +95,17 @@ packages/conformance/test/teeth.test.ts     129 行  12 个"套件抓得住违�
 
 ```
 $ npm test
-ℹ tests 41   ℹ pass 41   ℹ fail 0
+ℹ tests 54   ℹ pass 54   ℹ fail 0
 ```
 
 - `packages/ari/test/invariants.test.ts` — 29 个（真 harness 经真客户端驱动）
 - `packages/conformance/test/teeth.test.ts` — 12 个（含 9 种故意违规的检出证明）
+- `packages/shell/test/shell.test.ts` — 12 个（附录 A 第 23–25 条 + CLI 冒烟）
 
 ### 命令
 
 ```bash
-npm test                      # 41 个测试
+npm test                      # 54 个测试
 npm run test:invariants       # 只跑不变量测试
 npm run test:conformance      # 只跑"牙齿"测试
 npm run mock                  # 起 mock harness（在 stdin/stdout 上说 ARI 1.0）
@@ -235,19 +236,24 @@ npm run typecheck             # ⚠️ 从未成功跑过，见 §5
 
 ---
 
-## 5. 未完成事项（按优先级）
+### 5.0 已完成（本文件最初写完后补做）
 
-### P0 — `packages/shell`（参考壳）
+**`packages/shell` 已完成**（`packages/shell/src/{main,render,policy}.ts` + `test/shell.test.ts`）。
 
-`package.json` 里**已经有 `npm run shell` 脚本指向 `packages/shell/src/main.ts`，但该文件不存在**——这是个悬空脚本。
+- `render.ts` — `renderEvent(event)` **纯函数**，把 21 种事件映射为 `{kind:"stream"|"line"|"none"}`。未知类型返回 `none` 而不抛错（附录 A 第 23 条）。
+- `policy.ts` — `chooseDecision` / `parseDecision` / `buildAnswers`，**保证不发出 `options` 之外的决策**（第 24 条）。
+- `main.ts` — CLI。`--prompt`（一次性）、交互模式（stdin 行驱动）、`--policy ask|allow|deny`、`--no-reasoning`、`--show-status`、`--raw`。Ctrl-C 取消在飞 turn，再按一次退出。
+- 测试 12 个，覆盖第 23–25 条 + CLI 冒烟。**全仓测试从 41 → 54，全绿。**
 
-壳的职责：消费 ARI，**代码里不出现任何 harness 专有分支**。它是"ARI 到底能不能让壳无感"这个核心主张的验证物。
+**已验证的核心主张**：`grep -niE "mock|dsh|codex|zcode|opencode|acp" packages/shell/src/*.ts` **零命中**——壳里没有任何 harness 专有标识。13 条 mock 路径（tool/toolerror/chunks/dangling/usage/file/subagent/background/compact/error/throw/reasoning/echo）全部 exit 0。
 
-建议最小形态：CLI，接收 `-- <harness command>`，渲染事件流（文本输出即可），能响应审批/提问（stdin 输入或自动策略），能取消。
+**两个踩过的坑（写别的东西时会再遇到）**：
+1. **不要用 `readline.question()` 驱动管道输入**——所有行在 question 之前就已到达并触发 `line` 事件，会被静默丢弃。改用 `line` 事件 + 自己的状态机（下一行是答复还是 prompt 由 `pendingApproval`/`pendingQuestion` 决定）。TTY 和管道都成立。
+2. **订阅要在动作之前**。`await respondApproval()` 返回时，harness 可能已经把 `turn/completed` 发出来了——之后再 `client.on("turn/completed")` 就永远等不到。先收集事件数组再轮询（`packages/shell/test/shell.test.ts` 里的 `waitFor` 就是这个模式）。
 
-### P1 — 6 个适配层
+### 5.1 未完成事项（按优先级）
 
-`adapter-dsh` / `adapter-codex` / `adapter-zcode` / `adapter-opencode` / `adapter-pi` / `adapter-acp`。
+### P0 — 6 个适配层（`adapter-dsh` / `adapter-codex` / `adapter-zcode` / `adapter-opencode` / `adapter-pi` / `adapter-acp`）
 
 **适配原则：改信封、不改语义。** Harness 内部的 compaction 算法、PTC、工具管线、存储格式**不因适配 ARI 而改变**。
 
@@ -259,20 +265,20 @@ npm run typecheck             # ⚠️ 从未成功跑过，见 §5
 
 写适配层时**不要用 `AriHarness`**——那是给 harness 作者（服务端）用的；适配层是**翻译层**，把已有 harness 的私有协议翻译成 ARI，通常需要直接用 `AriClient` 的角色反向实现（即适配层扮演 server 对壳、扮演 client 对真 harness）。
 
-### P2 — 附录 A 的 Shell 侧三条（23–25）
+### P1 — 附录 A 的 Shell 侧三条（23–25）
 
 `23. 忽略未知事件 type/字段/能力键`、`24. 不发送不在 options 中的 decision`、`25. 断线后以 resume 重建状态并从 snapshot 恢复挂起交互`。
 
 **当前无法被 conformance CLI 覆盖**（那是面向 harness 的工具）。`packages/ari/test` 对参考客户端有部分覆盖。等 `packages/shell` 存在后，可以考虑给 conformance 加一个 `--as-shell` 模式，或单列一个 shell 侧测试。
 
-### P3 — 工程债
+### P2 — 工程债
 
 - **`npm run typecheck` 从未成功执行过**。`typescript` 与 `@types/node` 在 `devDependencies` 里，但**从未 `pnpm install`**（项目刻意零依赖运行，所以不需要装）。**类型从未被 tsc 检查过**——只被 Node 的 type stripping 检查过（它只擦除、不检查）。这是真实缺口。建议：跑一次 `pnpm install && pnpm typecheck` 并修掉发现的问题（或明确记录为已知状态）。
 - **GitHub 仓库 description 与 topics 仍为空**，API 改不了，要在网页上填。建议文案见本文件 §7 末尾。
 - **`LICENSE` 著作权人是 `cholf5`**（取自 git config）。挂在组织下，用户可能想改成真名或组织名。这是普通文件改动，不受"历史已冻结"影响。
 - **npm scope 未定**。`packages/ari/package.json` 里是 `"name": "@ari/protocol"`，与组织名不一致。**目前所有包都是 `"private": true`，发不出去，所以不急**。真要发包时 scope 会是 `@agent-runtime-interface/...`（29 字符，import 手感差）。
 
-### P4 — 外部验证（最高价值但不可控）
+### P3 — 外部验证（最高价值但不可控）
 
 **找一个不是我们写的 harness 跑 `packages/conformance`。** 这是"规范可被第三方独立实现"的唯一硬证据。在此之前，D8 的论证只算验证了一半——README 里已如实这么写。
 
@@ -295,7 +301,7 @@ npm run typecheck             # ⚠️ 从未成功跑过，见 §5
 ```bash
 cd <仓库根目录>
 
-# 1. 41 个测试应全绿
+# 1. 54 个测试应全绿
 npm test
 
 # 2. conformance 对 mock harness 应 23 passed / 0 failed / 1 skipped
@@ -314,14 +320,15 @@ node packages/conformance/src/main.ts --only C06 -- node packages/conformance/te
 
 ### 推荐的下一步动作
 
-**做 `packages/shell`。** 理由：
+**做第一个适配层，建议 `adapter-dsh`。** 理由：
 
-1. 它验证 ARI 的**核心主张**——壳能否真的对背后是哪个 harness 无感
-2. 它让 conformance 附录 A 的 Shell 侧三条（23–25）终于有被测对象
-3. 它比适配层便宜：先用 `mock-harness` 当靶子就能跑通，不必先啃 6 家私有协议
-4. 适配层写完也需要一个壳来演示，先做壳可以避免"适配层写完却无处可看"
+1. 壳已完成并验证过「不认识对端也能驱动」（见 §5.0），现在缺的是真实 runtime
+2. DSH 在报告 Part A 的 A1 里记录最完整，语义最全，映射近乎一一对应
+3. 做完立刻用 `packages/conformance` 判据化验证，而不是靠眼看
 
-建议形态：CLI（`-- <harness command>`），事件流文本渲染，审批/提问用 stdin 或 `--auto-allow` 策略，支持 Ctrl-C 取消。**保持零依赖、可擦除语法、英文注释。**
+**角色容易搞错**：适配层不是 harness，**不要用 `AriHarness`**。它是翻译器——对壳扮演 server（说 ARI），对真 harness 扮演 client（说它的私有协议）。两个方向通常都要手写，可直接用 `packages/ari/src/framing.ts` 的 `readFramesSafe` / `createFrameWriter` / `encodeFrame`。
+
+**不要一次铺开 6 个。** 做完 1 个（最好再加 Codex app-server，它的三级坐标信封差异最大）再决定。若 1–2 个适配层就要往 SPEC 里加东西，那说明规范有问题——**改 SPEC 是正确动作**。
 
 ---
 
@@ -379,12 +386,20 @@ agent-protocol, agent-runtime, coding-agent, ai-agents, specification, json-rpc,
 
 ```bash
 cd <仓库根目录>
-npm test                    # 确认 41/41 绿，建立基线
-git log --oneline -3        # 确认 HEAD = 53c4c8c
+npm test                    # 确认 54/54 绿，建立基线
+git log --oneline -3        # 确认 HEAD 包含 "Add the reference shell"
 ```
 
-然后**读 `SPEC.md` 的 §3 / §6 / §8 / §9 与附录 A**，再读 `packages/ari/src/harness.ts` 的 `#emit` 与 `#settleTurn`。
+然后**读 `SPEC.md` 的 §3 / §6 / §8 / §9 与附录 A**，再读 `packages/ari/src/harness.ts` 的 `#emit` 与 `#settleTurn`，以及 `packages/shell/src/main.ts`（看一个"不认识对端"的壳长什么样）。
 
-**接着直接开始写 `packages/shell/src/main.ts`**——先用 `packages/mock-harness` 当靶子跑通（`node packages/shell/src/main.ts -- node packages/mock-harness/src/main.ts`），确保壳里**没有一行代码知道背后是 mock 还是 DSH**。这个"无感"就是 ARI 存在的全部理由，也是你这一轮最该守住的东西。
+**接着开始做第一个适配层，建议 `adapter-dsh`。** 理由：报告 Part A 的 A1 对 DSH 的记录最完整，且 DSH 已有全部语义，映射近乎一一对应——**改信封、不改语义**。SPEC 附录 B 的映射表就是工作清单。
 
-不要先做适配层。壳能跑通 mock 之后，适配层只是翻译信封的体力活。
+**适配层的角色容易搞错，先想清楚**：它不是 harness（**不要用 `AriHarness`**），而是一个**翻译器**——对壳扮演 server（说 ARI），对真 harness 扮演 client（说 DSH 的私有协议）。所以它通常需要手写两个方向，可直接用 `readFramesSafe` / `createFrameWriter` / `encodeFrame`（都在 `packages/ari/src/framing.ts`）。
+
+做完第一个适配层后，**立刻用 `packages/conformance` 跑它**——那才是"适配对了没有"的判据，而不是靠眼看：
+
+```bash
+node packages/conformance/src/main.ts --probe-approval <DSH 里触发审批的 prompt> ... -- <适配层启动命令>
+```
+
+**不要一次铺开 6 个适配层。** 做完 1 个（最好再做 Codex app-server，它的三级坐标信封 `thread_id/turn_id/item_id` 差异最大、最能压测规范）再决定是否继续。如果 1–2 个适配层就要往 SPEC 里加东西，那说明规范有问题——**这时候改 SPEC 是正确动作，不是失败**。

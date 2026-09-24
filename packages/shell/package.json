@@ -1,0 +1,14 @@
+{
+  "name": "@ari/shell",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference ARI 1.0 shell: drives any conformant harness without knowing which one it is.",
+  "license": "Apache-2.0",
+  "bin": {
+    "ari-shell": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  }
+}
