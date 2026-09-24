@@ -137,7 +137,7 @@ turn/end
 - **父子关系**：`parentAgent` + meta.delegation depth；child 是独立 Session（有自己的 event log）；`SDK subagent.finished` 通知带 child 最后一条 assistant 消息（sdk/protocol/README.md:46）。
 - **并行 + 等待**：后台 continuable children（经 jobs 统一）；`wait_agent`（agent-team）；事件向上转发经 `ctx.subagents`（tool-subagent-control 描述）。
 - **Agent Teams（experimental）**：`ctx.agentTeams` durable roster/task board/mailbox；工具 `spawn_teammate`、`team_task_*`、`wait_agent`、`interrupt_agent`、`list_agents`、`send_message`；事件 `team/member`、`team/message/queued|delivered`、`team/task`（architecture.md:135; tool-catalog.md:43）。
-- **Shell 可见性**：subagent.started/finished（SDK）、child session 事件经 provider 转发、`list_agents` 投影。v0.1 协议完全可以只暴露"子代理存在 + 完成"两级。
+- **Shell 可见性**：subagent.started/finished（SDK）、child session 事件经 provider 转发、`list_agents` 投影。ARI 只暴露"子代理存在 + 完成"两级事件，编排不在协议内。
 
 ## 11. Streaming
 

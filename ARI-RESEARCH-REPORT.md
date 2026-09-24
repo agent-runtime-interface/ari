@@ -2,7 +2,7 @@
 
 > ARI 是项目名，不是首字母缩写——一套面向 Coding Agent Harness 的运行时协议。
 > 方法：以**源码与真实协议实现**为主要依据（每条关键结论都有 `path` + `symbol` 级引用，见 `research/01…08`），产品文档仅作补充并标注。
-> 本报告回答一个问题：现有主流 Coding Agent 的 Harness 之间，哪些是**真正共同的运行时抽象**，ARI v0.1 应该标准化什么、不该碰什么。
+> 本报告回答一个问题：现有主流 Coding Agent 的 Harness 之间，哪些是**真正共同的运行时抽象**，ARI 应该标准化什么、不该碰什么。
 
 ---
 
@@ -165,15 +165,15 @@ ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH 
 - **审批的会话级记忆**：`allow_always`（ACP kind、OpenCode always、Codex ApprovedForSession、Claude updatedPermissions）。
 - **审批参数改写**：`amended_input`（Claude updatedInput!、ZCode modifiedInput）——作为 capability flag（`approval.edit_input`），默认关闭。
 - **replay/mid-join 参数**：`session/resume {since}`（ZCode/ACP/Claude 证据）。
-- **fork**：Claude forkSession [08]、Codex fork [03]、DSH fork-at-turn-boundary [01]、Pi fork [05]、ZCode forkAssistant [02]、OpenCode fork [04]；Gemini/ACP 无。建议 v0.2 capability。
+- **fork**：Claude forkSession [08]、Codex fork [03]、DSH fork-at-turn-boundary [01]、Pi fork [05]、ZCode forkAssistant [02]、OpenCode fork [04]；Gemini/ACP 无。**已进 ARI 1.0** 为 `session/fork`（cap `fork`）。
 
 ## C3. 可以作为 capability（存在性强分化，强制会破坏"小协议"）
 
-- **subagent**：Codex 原生 [03] / DSH provider [01] / ZCode 子 session+镜像 [02] / OpenCode 子 session 自订阅 [04] / Claude Task [08] vs Pi、ACP 明确不做 [05][06]。→ v0.2+ 事件面（subagent.started/finished + 可选 child session attach）。
+- **subagent**：Codex 原生 [03] / DSH provider [01] / ZCode 子 session+镜像 [02] / OpenCode 子 session 自订阅 [04] / Claude Task [08] vs Pi、ACP 明确不做 [05][06]。→ ARI 1.0 事件面（`subagent/started`、`subagent/finished` + 可选 child session attach）。
 - **background task**：DSH jobs 统一 [01]、Codex RunUserShellCommand [03]、ZCode backgroundWorks [02]、Claude task_* [08] vs OpenCode/Pi 弱、ACP 无。→ capability。
 - **terminal/PTY 桥**：OpenCode `/api/pty` [04]、DSH terminals [01]、Codex process/* [07] vs **ACP v1 client-exec 在 v2 被删除** [06]。→ 不进 core；terminal 生命周期经工具事件暴露即可。
-- **file change 结构化事件**：OpenCode file.edited+patch part [04]、Codex PatchApply/TurnDiff [03]、DSH fs/*+changes feed [01] vs Pi 仅 details.diff [05]。→ v0.1 从工具事件派生；结构化事件作为 capability（`file_changes`）。
-- **client tools 反转**（客户端当工具提供方）：ACP v1→v2 删除（反面证据）[06]；Codex dynamic_tools 存在 [07]。→ 不进 ARI v0.1。
+- **file change 结构化事件**：OpenCode file.edited+patch part [04]、Codex PatchApply/TurnDiff [03]、DSH fs/*+changes feed [01] vs Pi 仅 details.diff [05]。→ ARI 1.0 以 capability `fileChanges` 提供（事件 `file/changed`）。
+- **client tools 反转**（客户端当工具提供方）：ACP v1→v2 删除（反面证据）[06]；Codex dynamic_tools 存在 [07]。→ 不进 ARI 1.0。
 - **PTC**：见 C4。
 
 ## C4. 应完全留在 Runtime 内部（有证据支持"不该协议化"）
@@ -182,16 +182,18 @@ ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH 
 - **Compaction 算法/阈值**：私有；协议只有事件（B10）。DSH 的 shadowedSeqs 记账、Pi 的 firstKeptEntryId、OpenCode PRUNE_MINIMUM/PROTECT 都是内部细节。
 - **模型路由/重试策略/退避**：私有（Codex 5s→60s [03]、Pi 3 次 2s [05]、OpenCode RetryPart [04]）。协议只要求 `error{retryable?}` 语义。
 - **沙箱与工具执行世界**：私有（Codex SandboxPolicy [03]、DSH ctx.sandbox [01]）。协议不感知。
-- **PTC 执行**：判断 = **Runtime implementation detail**。证据：DSH 的桥接 sub-call 重入正常工具管线并发普通 `tool/ptc-dispatch` 事件 [01]；Codex Code Mode 嵌套调用经 ToolRouter 回到普通事件流 [03]；OpenCode code-mode 只编排 MCP 工具 [04]。**Shell 无需知道"程序在跑"，只需看到（已有的）工具事件**——最多加一个 `program_started/finished` 可选事件（v0.2，不进 core）。
+- **PTC 执行**：判断 = **Runtime implementation detail**。证据：DSH 的桥接 sub-call 重入正常工具管线并发普通 `tool/ptc-dispatch` 事件 [01]；Codex Code Mode 嵌套调用经 ToolRouter 回到普通事件流 [03]；OpenCode code-mode 只编排 MCP 工具 [04]。**Shell 无需知道"程序在跑"，只需看到（已有的）工具事件**——最多加一个 `program_started/finished` 可选事件（扩展，不进 core）。
 - **Session 存储格式/generation/迁移**：私有（DSH vN [01]、Codex rollout [03]、ZCode SQLite [02]）。
 - **迭代上限/循环检测**：分化（Gemini MaxSessionTurns/LoopDetected [08]、ZCode signature streak [02]、OpenCode agent.steps [04]、DSH repeat-tool-reminder [01]、Codex/Pi 无）——语义上属 Runtime 自保，不是 Shell 关心的契约。
 
 ---
 
-# Part D：ARI v0.1 Proposal（最小可用）
+# Part D：ARI 1.0 提案（调研结论）
+
+> 本部分是调研推导出的提案；**规范性版本为 [SPEC.md](SPEC.md)**，两者冲突时以 SPEC.md 为准。
 
 > 设计顺序遵守：源码 → 行为模型（Part A）→ 共同抽象（Part B）→ 必要能力（Part C）→ 才有本节。
-> 目标：**一个独立开发者几天内可实现**。v0.1 全部核心 = **9 个方法 + 16 种事件 + 1 个握手**。
+> 目标：**一个独立开发者几天内可实现**。ARI 1.0 全部核心 = **10 个请求方法 + 21 种事件 + 1 个握手**。
 > （计数更正：原稿写 13，但 D6 表实际列了 14 行——若把可派生的 `file/changed` 排除，核心恰为 13；本轮补入 `approval/resolved`、`question/resolved` 后为 **16 行 / 核心 15**。方法数"9"含 `initialized` 通知，请求方法为 8，见 D3/D4/D5。）
 
 ## D1. 原则
@@ -199,7 +201,7 @@ ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH 
 1. Protocol 与 Transport 解耦：核心 = 方法名 + payload schema + 排序/重放保证。
 2. 只标准化 B1–B12 的共同抽象；C3 一律 capability；C4 一律不碰。
 3. 不定义工具体、不定义 UI、不定义 Model Provider、不规定 Harness 内部（含 compaction/PTC/sandbox）。
-4. 可扩展性学 ACP/MCP：`_meta` 自由字段 + `_` 前缀保留；未知事件/字段必须被忽略（ZCode 的封闭投影 + ACP 的 open worlds 折中：**枚举封闭于 v0.1，map 开放于 _meta**）。
+4. 可扩展性学 ACP/MCP：`_meta` 自由字段 + `_` 前缀保留；未知事件/字段必须被忽略（ZCode 的封闭投影 + ACP 的 open worlds 折中：**枚举封闭于 ARI 1.0，map 开放于 _meta**）。
 
 ## D2. Transport binding
 
@@ -228,8 +230,10 @@ ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH 
     "compactionEvents": true,
     "replay": true,             // session/resume 支持 since
     "fileChanges": false,       // 结构化 file/changed 事件
-    "subagents": false,         // v0.2+
-    "backgroundTasks": false    // v0.2+
+    "subagents": false,         // cap: subagent/* 事件
+    "backgroundTasks": false,   // cap: background/* 事件
+    "fork": false,              // session/fork
+    "sessionList": false        // session/list
   }
 }}
 ```
@@ -246,19 +250,21 @@ ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH 
 - 已 initialize 的连接再次 initialize ⇒ `-32006`（不重协商；重协商须重连）。
 - 客户端随后发 `initialized` 通知（对齐 ACP/Codex App Server）；**该通知不参与门控**——server 在 initialize 成功应答后即须接受其余方法，`initialized` 缺失不报错（避免为对齐 ACP 而引入无谓的失败模式）。
 
-## D4. Session 生命周期（client → server，5 个方法）
+## D4. Session 生命周期（client → server，7 个方法）
 
 ```jsonc
 session/new     { cwd?, meta? }                        → { sessionId, nextSeq }   // nextSeq = 下一条事件将用的序号，新会话为 1（原稿字段名 `seq`，与 resume 统一为 `nextSeq`）
 session/resume  { sessionId, since? }                  → { sessionId, replayedFrom, nextSeq, events[], snapshot? }
 session/prompt  { sessionId, content: ContentBlock[] } → { messageId }        // durable 入队回执，≠ turn 结局（B4）
 session/cancel  { sessionId, cause? }                  → { cancelledTurn?, droppedMessageIds: string[] }
+session/fork    { sessionId, atTurn? }                 → { sessionId, nextSeq, forkedFrom }   // cap: fork
+session/list    { cwd? }                               → { sessions[] }                        // cap: sessionList
 shutdown        {}                                     → {}
 ```
 - **并发 prompt = 入队；不拒绝、也不隐式打断。** turn 运行中收到 `session/prompt` 一律接受并追加到该 session 的 **pending-input FIFO 队列**。`messageId` 的承诺范围严格是"**已持久入队**"——既不表示 turn 已开始，也不表示模型已看到。依据：ZCode 输入队列（`sendQueuedNow/editQueueItem/reorderQueueItem/deleteQueueItem/setAutoDrain`、`TurnMachine.queuePendingInput/drainPendingInputs` [02]）；DSH inbox 的 `nextTurn`+`nextStep` 双有序队列与 claim 语义 [01]。
 - **关联义务**：`turn/started` 必须携带 `messageIds: string[]`（该 turn 从队列 claim 的消息，可 ≥1 条——DSH 一次 claim 可领多条 [01]）。缺了它，回执在线上无法与任何事件关联，"已入队"不可验证。
 - **队列上限**：实现可设内部上限；超限时必须以 JSON-RPC 错误 `-32005` 拒绝该次 prompt，**不得静默丢弃**。
-- **中途转向（steer/inject）不进 v0.1**：DSH `steer()`（最近 step 边界消费）/`followup()`/`inject()` 与 ZCode 的 guide-vs-queue 分化过大 [01][02] → v0.2 capability。
+- **中途转向（steer/inject）不在 ARI 1.0**：DSH `steer()`（最近 step 边界消费）/`followup()`/`inject()` 与 ZCode 的 guide-vs-queue 分化过大 [01][02] → 走扩展（SPEC §12）。
 - `since` 省略 = 从头重放。**`since` 超出保留窗口不是错误**：server 必须退化为"`snapshot` + 自保留基点起的全部 `events`"，并用 `replayedFrom` 标明基点（ZCode 由 server 在 `snapshot | resume` 间选模式 [02]）。仅当 server 完全无日志（`replay:false`）时才回 `-32004`。
 - `since` > 当前水位（未来序号）⇒ `-32602`（客户端 bug，不静默纠正）。
 - **resume 的一致性切面**：应答 `events` 的最后一条 seq < `nextSeq`；此后同一 session 的实时事件 seq ≥ `nextSeq`，**不重不漏**（watermark 语义，ZCode [02]）。
@@ -273,12 +279,12 @@ shutdown        {}                                     → {}
   "usage":{ "inputTokens":0, "outputTokens":0 } }
 ```
 
-- **订阅模型（v0.1 = 隐式订阅）**：连接对"本连接上 `session/new` 或 `session/resume` 成功的每个 session"自动订阅 `event`，**无需 subscribe 方法**；唯一退订 = 关闭连接。同一 session 允许多连接（Codex App Server 多连接 fan-out [07]）：事件广播到全部订阅连接，任一连接上的 `approval/respond` 对全体生效。
+- **订阅模型（ARI 1.0 = 隐式订阅）**：连接对"本连接上 `session/new` 或 `session/resume` 成功的每个 session"自动订阅 `event`，**无需 subscribe 方法**；唯一退订 = 关闭连接。同一 session 允许多连接（Codex App Server 多连接 fan-out [07]）：事件广播到全部订阅连接，任一连接上的 `approval/respond` 对全体生效。
 - **顺序保证**：`session/prompt` 的应答必须先于"由该 prompt 引起的任何事件"发出（否则 Shell 无法归属事件）；其他来源（先前入队消息、后台工作）的事件可与之交错。跨 session 无序，但同一 session 在所有连接上按 seq 一致投递。
-- **cancel 语义**：只作用于**当前在飞 turn**，并**清空尚未 claim 的 pending-input 队列**——即真正的停止；否则队列会立刻重启工作，Ctrl-C 形同虚设。被取消 turn 必须结算为 `turn/completed{stopReason:"cancelled"}`；被丢弃的入队消息经应答 `droppedMessageIds` 与 `snapshot.queue` 可观测，不另发事件。无在飞 turn 时 cancel 为幂等空操作。`cause` 为可选不透明字符串，v0.1 不设闭式枚举（Codex 的 4 种 reason 属 runtime 内部 [03]）。
+- **cancel 语义**：只作用于**当前在飞 turn**，并**清空尚未 claim 的 pending-input 队列**——即真正的停止；否则队列会立刻重启工作，Ctrl-C 形同虚设。被取消 turn 必须结算为 `turn/completed{stopReason:"cancelled"}`；被丢弃的入队消息经应答 `droppedMessageIds` 与 `snapshot.queue` 可观测，不另发事件。无在飞 turn 时 cancel 为幂等空操作。`cause` 为可选不透明字符串，ARI 1.0 不设闭式枚举（Codex 的 4 种 reason 属 runtime 内部 [03]）。
 - `shutdown`：client→server 请求；应答后 server **不得再发事件**，在飞 turn 直接放弃——这是 D9-I1 结算不变量的**唯一豁免**——并应在有限时间内退出。
-- `ContentBlock` v0.1 仅 `{"type":"text","text":string}`；`image` 等作为 capability 扩展（ACP/MCP 同款教训：基线最小）。
-- `session/list` 列为可选（capability `session_list`），v0.1 不强制。
+- `ContentBlock` 在 ARI 1.0 仅 `{"type":"text","text":string}`；`image` 等作为 capability 扩展（ACP/MCP 同款教训：基线最小）。
+- `session/list`（capability `sessionList`）与 `session/fork`（capability `fork`）见 SPEC §7.5–7.6。
 
 ## D5. 人机交互（2 个方法）
 
@@ -289,7 +295,7 @@ approval/respond { sessionId, approvalId,
 question/respond { sessionId, questionId,
   answers: [{ id, values: string[] }] }              → {}   // 仅当 agentCapabilities.question
 ```
-决策枚举取各方交集：`allow_once`（DSH allowed-once [01]、ACP allow_once [06]、OpenCode once [04]）、`allow_always`（ACP/OpenCode/Codex ApprovedForSession [03][06]）、`deny`（全部）。参数改写（Claude updatedInput [08]、ZCode modifiedInput [02]）与"拒绝+反馈文本"（OpenCode [04]）都不进 v0.1 枚举——前者走 capability，后者 Shell 可自行再发一条 prompt。
+决策枚举取各方交集：`allow_once`（DSH allowed-once [01]、ACP allow_once [06]、OpenCode once [04]）、`allow_always`（ACP/OpenCode/Codex ApprovedForSession [03][06]）、`deny`（全部）。参数改写（Claude updatedInput [08]、ZCode modifiedInput [02]）与"拒绝+反馈文本"（OpenCode [04]）都不进 ARI 1.0 枚举——前者走 capability，后者 Shell 可自行再发一条 prompt。
 
 **形状与约束**（补 review 指出的"options 无 schema、提问无拒绝表示、跨断线时效"）：
 
@@ -309,7 +315,7 @@ question/respond { sessionId, questionId,
 - **ID / 序号类型（原稿未定义）**：`sessionId`/`messageId`/`callId`/`approvalId`/`questionId` = **不透明字符串**（建议 `s_`/`m_`/`t_`/`ap_`/`q_` + ULID）；`seq` = 整数，**1 起**、每 session 单调 +1、无空洞；`turn` = 整数，**1 起**、每 session 单调 +1（DSH/Codex ordinal 语义 [01][03]）。
 - **seq 起点 = 1**：新 session 首条事件 seq=1；`session/new` 返回的 `seq` 即"下一条将使用的序号"（新会话 = 1）。**重放事件与实时事件共用同一 seq 空间**，故 Example 3 的 `since` 语义无歧义。
 - **单帧上限（binding A）**：任一 NDJSON 行 ≤ **1 MiB**（1,048,576 字节，不含换行）。超限 payload 必须在**事件层**拆分，绝不切 JSON 值：工具大输出先以 `tool/updated.outputDelta` 分块（每块 ≤1 MiB）流式下发，`tool/completed.output` 此时应为空或摘要，完整载荷放 `meta`/`outputRef`。依据：ZCode >1MiB 帧分片 [02]、Pi 背压感知 [05]。写入侧必须施加背压（阻塞写）而非无界缓冲（Pi [05]）。
-- 事件类型（v0.1 全集）：
+- 事件类型（ARI 1.0 全集，21 种 = 10 必需 + 11 能力门控）：
 
 | type | payload 要点 | 对应证据 |
 |---|---|---|
@@ -327,30 +333,34 @@ question/respond { sessionId, questionId,
 | `question/resolved` | `questionId, outcome: "answered"\|"declined"\|"expired"`（cap: question；每个 requested **恰好一条**） | [01][04] |
 | `usage/updated` | `turn?, usage{inputTokens, outputTokens, cachedTokens?, reasoningTokens?, cost?}` | B9 |
 | `compaction/performed` | `trigger: "manual"\|"auto"\|"overflow", preTokens?, postTokens?`（cap: compactionEvents） | B10 |
-| `file/changed` | `path, kind: "create"\|"modify"\|"delete"\|"rename", diff?`（cap: fileChanges；v0.1 可由 tool 事件派生） | C3 |
+| `file/changed` | `path, kind: "create"\|"modify"\|"delete"\|"rename", diff?`（cap: fileChanges） | C3 |
+| `subagent/started` | `callId?, sessionId?, name?`（cap: subagents；只标准事件面，编排不在协议内） | [01][02][03][04][08] |
+| `subagent/finished` | `callId?, sessionId?, status: "success"\|"error"\|"cancelled", summary?`（cap: subagents） | 同上 |
+| `background/started` | `taskId, title?`（cap: backgroundTasks；无控制 API） | [01][02][03][08] |
+| `background/updated` | `taskId, status: "running"\|"pending", title?, outputDelta?`（cap: backgroundTasks） | 同上 |
+| `background/finished` | `taskId, status: "success"\|"error"\|"cancelled", output?`（cap: backgroundTasks） | 同上 |
 | `session/error` | `error{ code, message, retryable? }` | B8/C2 |
 
 - **排序**：单 session 内严格按 seq；跨 session 无序。同一 session 在所有订阅连接上按 seq 一致投递（D4 订阅模型）。
 - **pending 状态可推导**：`approval/requested` 未收到对应 `approval/resolved` = waiting；断线重连后由 `snapshot.pendingApprovals/pendingQuestions` 给出当前挂起集（Claude SessionState `requires_action` [08] 与 ACP v2 同构，可后加）。**原稿"不需要额外 state 位"的说法只在单连接、不重连时成立**——正是 `*/resolved` 事件（+ snapshot）让这条在断线场景下也成立，这也是本次唯一新增事件类型的原因（见 D9-I7）。
 
-## D7. 明确不进 v0.1 的（附理由）
+## D7. 明确不进 ARI 1.0 的（附理由）
 
 | 排除项 | 理由（证据） |
 |---|---|
 | 工具体/schema 标准化 | B13；MCP 已解决工具接入，勿重复 |
 | client tools 反转（fs/terminal 回调） | ACP v2 删除该面 [06]；Codex dynamic_tools 留在自家 [07] |
 | PTC 事件/控制 | C4：runtime detail；桥接调用已是普通工具事件 [01][03] |
-| subagent 编排 | C3：分化最大；v0.2 capability（事件面） |
-| 后台任务控制 | C3：v0.2 capability |
-| fork/branch | C2：v0.2 capability（协议里加 `session/fork` 很容易，但先证明需求） |
+| subagent 编排 | C3：分化最大；1.0 只标准化事件面，编排走扩展 |
+| 后台任务控制 | C3：1.0 只标准化事件面，控制走扩展 |
 | 终端桥（PTY 透传/输出订阅） | C3：ACP v2 反向证据；runtime 自有 UI 通道 [04][01] |
 | compaction 控制（手动触发/参数） | Codex App Server 都"不可参数化" [07]；DSH 有手动命令但属 human command 而非协议 [01] |
-| 审批策略修正（execpolicy amendment） | Codex 特有 [03][07]，封闭枚举放不下；v0.2 再议 |
-| 模型/权限模式设置 | Claude set_permission_mode/set_model [08]、ZCode switchCollaborationMode [02] 属产品面；v0.1 用 `session/new meta` 一次性声明即可 |
+| 审批策略修正（execpolicy amendment） | Codex 特有 [03][07]，封闭枚举放不下；走扩展（SPEC §12） |
+| 模型/权限模式设置 | Claude set_permission_mode/set_model [08]、ZCode switchCollaborationMode [02] 属产品面；用 `session/new meta` 一次性声明即可 |
 
 ## D8. "几天实现"自检
 
-一个 v0.1 兼容 Runtime 的最小义务：stdin JSONL 解析（~50 行）+ initialize/会话三方法/两个 respond 方法（~100 行）+ 把自己的循环事件映射到 16 种事件（~100 行）+ cancel。**无账本、无 compaction、无 subagent 的 SimpleAgent 也能合规**——只要它如实声明 capabilities（不发布 compaction 事件、`compactionEvents:false`）。反向自检：DSH/Codex/ZCode 的现有协议面到 ARI v0.1 的映射都是"改信封、不改语义"级别（见 Example 4）。
+一个 ARI 1.0 兼容 Runtime 的最小义务：stdin JSONL 解析（~50 行）+ initialize/会话三方法/两个 respond 方法（~100 行）+ 把自己的循环事件映射到 21 种事件（~100 行）+ cancel。**无账本、无 compaction、无 subagent 的 SimpleAgent 也能合规**——只要它如实声明 capabilities（不发布 compaction 事件、`compactionEvents:false`）。反向自检：DSH/Codex/ZCode 的现有协议面到 ARI 1.0 的映射都是"改信封、不改语义"级别（见 Example 4）。
 
 ## D9. 结算不变量与错误码（回答"该监听哪个事件收尾"）
 
@@ -378,7 +388,7 @@ question/respond { sessionId, questionId,
 | -32007 | `unknown_interaction` | `approvalId`/`questionId` 不存在，或**以不同 decision 重复作答**已终结交互 | 否 |
 | -32008 | `unsupported_protocol_version` | initialize 请求的 MAJOR 不受支持（`data.supportedVersions`） | 是（换版本重试一次） |
 
-注：ACP 的 `-32800`（`$/cancel_request`）在 v0.1 不适用——取消是一等方法 `session/cancel`，错误面无需请求级取消码 [06]。
+注：ACP 的 `-32800`（`$/cancel_request`）在 ARI 1.0 不适用——取消是一等方法 `session/cancel`，错误面无需请求级取消码 [06]。
 
 ---
 
@@ -449,7 +459,7 @@ Shell                          Runtime                        Model/Tools
 
 **（a）DSH → ARI（适配器 ≈ 改信封）**：DSH 已有全部语义，映射近乎一一对应：
 
-| ARI v0.1 | DSH 现有机制 [01] |
+| ARI 1.0 | DSH 现有机制 [01] |
 |---|---|
 | initialize/capabilities | DSH SDK `initialize`（补版本协商——其已知限制） |
 | session/new / resume / prompt(回执) | `agents.create/resume`；SDK `session/prompt`→`messageId` |
@@ -487,4 +497,4 @@ Shell                          Runtime                        Model/Tools
 
 ## 最终原则自查（对应任务十九条之 1–10）
 
-1. 不为 DSH 特制——Example 4(b) 反证；2. 不为 ZCode 特制——同；3. 不复制 ACP——client-tool 反转、turn=响应生命周期、modes 双轨均被明确拒绝（D7）；4. 不复制 MCP——工具不进协议（D7）；5. 不规定 Harness 内部——C4；6. 不规定 Model Provider——initialize 无 provider 字段；7. 不规定 UI——事件是语义不是渲染（meta 不透明）；8. 不规定具体 Tool——B13；9. 不为未来功能提前设计——subagent/background/fork/PTY 全部推迟并给出 v0.2 位点；10. 可实现性——D8 自检：9 方法 + 16 事件，SimpleAgent 200 行可合规。
+1. 不为 DSH 特制——Example 4(b) 反证；2. 不为 ZCode 特制——同；3. 不复制 ACP——client-tool 反转、turn=响应生命周期、modes 双轨均被明确拒绝（D7）；4. 不复制 MCP——工具不进协议（D7）；5. 不规定 Harness 内部——C4；6. 不规定 Model Provider——initialize 无 provider 字段；7. 不规定 UI——事件是语义不是渲染（meta 不透明）；8. 不规定具体 Tool——B13；9. 不为未来功能提前设计——subagent/background/fork/PTY 全部移出并给出扩展位点（SPEC §12）；10. 可实现性——D8 自检：10 方法 + 21 事件，SimpleAgent 200 行可合规。
