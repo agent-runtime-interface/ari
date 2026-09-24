@@ -74,6 +74,61 @@ export async function* readFrames(
 }
 
 /**
+ * A non-throwing variant of {@link readFrames}.
+ *
+ * A Harness must be able to answer `-32700` for a malformed frame and keep
+ * serving the connection (SPEC §11.1), so a parse failure cannot be allowed to
+ * tear down the read loop. Each yielded item is either a decoded value or the
+ * error for one frame.
+ */
+export type FrameResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: Error; line: string };
+
+export async function* readFramesSafe(
+  source: AsyncIterable<Uint8Array | string>,
+): AsyncGenerator<FrameResult> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const decode = (line: string): FrameResult => {
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (bytes > MAX_FRAME_BYTES) return { ok: false, error: new FrameTooLargeError(bytes, "while decoding"), line };
+    try {
+      return { ok: true, value: JSON.parse(line) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error : new Error(String(error)), line };
+    }
+  };
+
+  for await (const chunk of source) {
+    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+
+    let newlineAt = buffer.indexOf("\n");
+    while (newlineAt >= 0) {
+      const line = buffer.slice(0, newlineAt);
+      buffer = buffer.slice(newlineAt + 1);
+      if (line.trim() !== "") yield decode(line);
+      newlineAt = buffer.indexOf("\n");
+    }
+
+    if (Buffer.byteLength(buffer, "utf8") > MAX_FRAME_BYTES) {
+      // Oversized with no newline in sight: drop the buffer and report one frame.
+      const dropped = buffer;
+      buffer = "";
+      yield {
+        ok: false,
+        error: new FrameTooLargeError(Buffer.byteLength(dropped, "utf8"), "in incomplete frame"),
+        line: dropped.slice(0, 200),
+      };
+    }
+  }
+
+  const tail = buffer.trim();
+  if (tail !== "") yield decode(tail);
+}
+
+/**
  * Create a frame writer with backpressure.
  *
  * The returned function waits for `drain` when the underlying buffer is full, so it never piles up without bound (SPEC §4.3).
