@@ -1,18 +1,18 @@
 /**
  * ARI 1.0 error codes — SPEC.md §11.
  *
- * ARI 复用 JSON-RPC 2.0 标准码，并在其保留区间 -32000…-32099 内定义自有码。
+ * ARI reuses the JSON-RPC 2.0 standard codes and defines its own codes inside the range -32000…-32099 that those codes reserve.
  */
 
 export const AriErrorCode = {
-  // JSON-RPC 2.0 标准
+  // JSON-RPC 2.0 standard
   ParseError: -32700,
   InvalidRequest: -32600,
   MethodNotFound: -32601,
   InvalidParams: -32602,
   InternalError: -32603,
 
-  // ARI 自有
+  // ARI-specific
   SessionNotFound: -32001,
   NotInitialized: -32002,
   UnsupportedCapability: -32003,
@@ -41,12 +41,12 @@ const NAMES: Record<number, string> = {
   [-32008]: "unsupported_protocol_version",
 };
 
-/** 错误码的规范名称（SPEC §11.1）。 */
+/** Canonical name of an error code (SPEC §11.1). */
 export function errorName(code: number): string {
   return NAMES[code] ?? `error_${code}`;
 }
 
-/** 可在协议边界安全抛出的错误；会被映射为 JSON-RPC error 对象。 */
+/** An error that is safe to throw at the protocol boundary; it is mapped to a JSON-RPC error object. */
 export class AriError extends Error {
   code: number;
   data: unknown;
@@ -63,7 +63,7 @@ export function isAriError(value: unknown): value is AriError {
   return value instanceof AriError;
 }
 
-/** 便捷构造器。 */
+/** Convenience constructors. */
 export const ariErrors = {
   sessionNotFound: (sessionId: string) =>
     new AriError(AriErrorCode.SessionNotFound, `unknown session: ${sessionId}`),

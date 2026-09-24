@@ -1,73 +1,71 @@
 # ARI 1.0 Specification
 
-> ARI = **Agent Runtime Interface**。本文件是 ARI 的**规范性规范**。
-> 调研依据与取舍论证见 [ARI-RESEARCH-REPORT.md](ARI-RESEARCH-REPORT.md) 与 [research/](research/)。
+> ARI = **Agent Runtime Interface**. This document is the **normative specification** for ARI.
+> For the research basis and trade-off analysis, see [ARI-RESEARCH-REPORT.md](ARI-RESEARCH-REPORT.md) and [research/](research/).
 
 ---
 
-## 0. 状态与规范性语言
+## 0. Status and Normative Language
 
-本文使用 RFC 2119 关键词，中文对照如下：
+This document uses RFC 2119 keywords, defined as follows:
 
-| 关键词 | 含义 |
+- **MUST**: an absolute requirement. Violation means non-conformance with ARI 1.0.
+- **MUST NOT**: an absolute prohibition.
+- **SHOULD**: a strong recommendation. There may exist valid reasons to deviate, but the full implications must be understood.
+- **SHOULD NOT**: a strong discouragement.
+- **MAY**: optional.
+
+`protocolVersion` is the integer **1** (MAJOR-only, see §5). This document describes ARI **1.0**.
+
+---
+
+## 1. Scope and Non-Goals
+
+### 1.1 Scope
+
+ARI is an **interface specification**: it defines the contract between a Shell and a Harness, while a protocol binding (such as JSON-RPC/NDJSON, §4) defines how that contract is transported.
+
+ARI defines the **runtime contract between Shell and Harness**: session lifecycle, event stream, turn settlement, tool-call lifecycle, human-in-the-loop interaction, cancellation, usage and compaction notifications, error semantics, and capability negotiation.
+
+- **Shell**: the client that drives the agent (IDE plugin, TUI, Web UI, automation script).
+- **Harness**: the runtime that implements the agent loop (DSH, Codex, ZCode, OpenCode, Pi, or in-house).
+
+ARI's goal is that a Shell need not know which Harness it is connected to.
+
+### 1.2 Non-Goals
+
+ARI does **not** specify the following, and conforming implementations **MUST NOT** assume them:
+
+- **Tool bodies and tool schemas** — tool integration is handled by external mechanisms such as MCP. ARI specifies only the event shape of tool calls.
+- **Models and providers** — no specification of model selection, routing, retry policy, or backoff algorithm.
+- **UI and rendering** — events are semantics, not rendering. `meta` is opaque to the Shell.
+- **Harness internals** — compaction algorithms and thresholds, PTC/sandboxed execution, storage formats and migration, iteration limits, loop detection, context assembly.
+- **Security models beyond transport** — see §13.
+- **client tools inversion** (the Shell providing fs/terminal tools to the Harness). This design was removed in ACP v1→v2 (inconsistent implementations); ARI does not adopt it.
+- **PTY/terminal passthrough** — exposing the terminal lifecycle through tool events is sufficient.
+
+---
+
+## 2. Terminology
+
+| Term | Definition |
 |---|---|
-| **MUST** / 必须 | 绝对要求。违反即不符合 ARI 1.0 |
-| **MUST NOT** / 禁止 | 绝对禁止 |
-| **SHOULD** / 应当 | 强烈建议。存在正当理由时可偏离，但必须理解其后果 |
-| **SHOULD NOT** / 不应当 | 强烈不建议 |
-| **MAY** / 可以 | 可选 |
-
-`protocolVersion` 为整数 **1**（MAJOR-only，见 §5）。本文描述 ARI **1.0**。
-
----
-
-## 1. 范围与非目标
-
-### 1.1 范围
-
-ARI 是一份**接口规范**：它规定 Shell 与 Harness 之间的契约，而协议绑定（如 JSON-RPC/NDJSON，§4）规定该契约如何传输。
-
-ARI 规定 **Shell 与 Harness 之间的运行时契约**：会话生命周期、事件流、turn 结算、工具调用生命周期、人机交互、取消、用量与压缩通知、错误语义、能力协商。
-
-- **Shell**：驱动 agent 的客户端（IDE 插件、TUI、Web UI、自动化脚本）。
-- **Harness**：实现 agent 循环的运行时（DSH、Codex、ZCode、OpenCode、Pi，或自研）。
-
-ARI 的目标是让一个 Shell 不必知道自己连的是哪个 Harness。
-
-### 1.2 非目标
-
-ARI **不**规定，且合规实现**禁止**假设以下内容：
-
-- **工具体与工具 schema**——工具接入由 MCP 等外部机制解决。ARI 只规定工具调用的事件形状。
-- **模型与 provider**——不规定模型选择、路由、重试策略、退避算法。
-- **UI 与渲染**——事件是语义不是渲染。`meta` 对 Shell 不透明。
-- **Harness 内部**——compaction 算法与阈值、PTC/沙箱执行、存储格式与迁移、迭代上限、循环检测、上下文装配。
-- **传输以外的安全模型**——见 §13。
-- **client tools 反转**（由 Shell 提供 fs/terminal 工具给 Harness）。此设计在 ACP v1→v2 中已被删除（实现不一致），ARI 不采纳。
-- **PTY/终端透传**——终端生命周期经工具事件暴露即可。
+| **Session** | One continuous conversation. Identified by an opaque `sessionId`. The event ledger is isolated per session. |
+| **Event** | An immutable fact produced by the Harness and belonging to a session. Carries a monotonic `seq`. |
+| **Turn** | A unit of work: from claiming input to settlement. Within a session, `turn` increases monotonically from 1. |
+| **Step** | One model call. **ARI does not expose step**; it is a Harness-internal concept. |
+| **ToolCall** | One tool call, identified by an opaque `callId`; for the state machine see §9.2. |
+| **Interaction** | A pending item requiring a Shell answer: a closed-form approval or an open-ended question. |
+| **pending-input queue** | A per-session FIFO queue holding prompts that have been accepted but not yet claimed by a turn. |
+| **watermark** | `nextSeq`, the sequence number of the session's next event. |
 
 ---
 
-## 2. 术语
-
-| 术语 | 定义 |
-|---|---|
-| **Session** | 一次持续对话。由不透明 `sessionId` 标识。事件账本按 session 隔离。 |
-| **Event** | Harness 产生的、属于某 session 的不可变事实。带单调 `seq`。 |
-| **Turn** | 一个工作单元：从 claim 输入到结算。每 session 内 `turn` 从 1 单调递增。 |
-| **Step** | 一次模型调用。**ARI 不暴露 step**，它是 Harness 内部概念。 |
-| **ToolCall** | 一次工具调用，由不透明 `callId` 标识，状态机见 §9.2。 |
-| **Interaction** | 需要 Shell 作答的挂起项：闭式审批（approval）或开放式提问（question）。 |
-| **pending-input 队列** | 每 session 的 FIFO 队列，存放已接受但尚未被 turn claim 的 prompt。 |
-| **水位（watermark）** | `nextSeq`，即该 session 下一条事件的序号。 |
-
----
-
-## 3. 架构与定位
+## 3. Architecture and Positioning
 
 ```
   Shell A ─┐
-  Shell B ─┤   ARI（本规范）
+  Shell B ─┤   ARI (this specification)
   Shell C ─┘        │
               ┌─────┴─────┐
               │  Harness  │
@@ -75,51 +73,51 @@ ARI **不**规定，且合规实现**禁止**假设以下内容：
               │ DSH       │
               │ Codex     │
               │ OpenCode  │
-              │ 自研       │
+              │ in-house  │
               └───────────┘
 ```
 
-**通信模型**：ARI 1.0 **只使用两种消息**：
+**Communication model**: ARI 1.0 **uses only two kinds of messages**:
 
-1. **client → server 请求**（有 `id`，有应答）
-2. **server → client 通知**（无 `id`，不应答）
+1. **client → server request** (has `id`, has a response)
+2. **server → client notification** (no `id`, no response)
 
-ARI 1.0 **不使用 server → client 请求**。人机交互采用「Harness 发事件 → Shell 调用 respond 方法」的单向模式，而非 ACP 的 `session/request_permission` 反向请求。理由：Shell 无需实现请求路由器，事件流保持单一有序通道。
-
----
-
-## 4. 传输绑定
-
-核心数据模型与传输解耦。Binding A 为**规范性**，Binding B 为**信息性**（数据模型相同，仅传输映射不同）。
-
-### 4.1 Binding A（规范性）：JSON-RPC 2.0 over stdio，newline-delimited
-
-- 消息为 **JSON-RPC 2.0** 对象。
-- 分帧：**每行一条完整 JSON**，以单个 `\n`（U+000A）结束。**JSON 内禁止嵌入换行**（即禁止 pretty-print）。
-- **stdout 纯净性**：Harness 的 stdout **必须**只包含 ARI 消息。所有日志、调试输出、进度信息**必须**写 stderr。
-- 编码为 UTF-8。
-- stdin 关闭表示 Shell 侧终止；Harness **应当**据此优雅停机。
-
-### 4.2 帧上限
-
-- 单行**必须** ≤ **1,048,576 字节**（1 MiB，UTF-8，不含结尾换行）。
-- 超过上限的载荷**必须**在**事件层**拆分，**禁止**切割 JSON 值。
-- 工具大输出**必须**先以 `tool/updated.outputDelta` 分块流式下发（每块 ≤ 1 MiB）；此时 `tool/completed.output` **应当**为空或摘要，完整载荷放 `meta`。
-
-### 4.3 背压
-
-写入侧**必须**施加背压（阻塞写），**禁止**无界缓冲。读取侧**应当**及时消费，避免对端阻塞。
-
-### 4.4 Binding B（信息性）：HTTP + SSE
-
-- 方法 = `POST /ari/<method>`，请求体为 JSON-RPC 请求对象，响应体为 JSON-RPC 响应对象。
-- 事件 = `GET /ari/events` 的 SSE 流，`data:` 为 `event` 通知的 JSON。
-- 核心数据模型、`seq` 语义、错误码均与 Binding A 一致。
-- 帧上限与背压由 HTTP 层承担。
+ARI 1.0 **does not use server → client requests**. Human-in-the-loop interaction uses the one-way pattern "Harness emits an event → Shell calls a respond method", rather than ACP's `session/request_permission` reverse request. Rationale: the Shell need not implement a request router, and the event stream remains a single ordered channel.
 
 ---
 
-## 5. 握手与版本协商
+## 4. Transport Binding
+
+The core data model is decoupled from transport. Binding A is **normative**; Binding B is **informative** (the data model is the same; only the transport mapping differs).
+
+### 4.1 Binding A (normative): JSON-RPC 2.0 over stdio, newline-delimited
+
+- Messages are **JSON-RPC 2.0** objects.
+- Framing: **one complete JSON per line**, terminated by a single `\n` (U+000A). **Newlines MUST NOT be embedded within JSON** (that is, pretty-print is prohibited).
+- **stdout purity**: the Harness's stdout **MUST** contain only ARI messages. All logs, debug output, and progress information **MUST** be written to stderr.
+- Encoding is UTF-8.
+- Closing stdin indicates termination on the Shell side; the Harness **SHOULD** shut down gracefully in response.
+
+### 4.2 Frame Limit
+
+- A single line **MUST** be ≤ **1,048,576 bytes** (1 MiB, UTF-8, excluding the trailing newline).
+- A payload exceeding the limit **MUST** be split at the **event layer**; JSON values **MUST NOT** be split.
+- Large tool output **MUST** first be streamed in chunks via `tool/updated.outputDelta` (each chunk ≤ 1 MiB); in that case `tool/completed.output` **SHOULD** be empty or a summary, with the full payload placed in `meta`.
+
+### 4.3 Backpressure
+
+The write side **MUST** apply backpressure (blocking writes) and **MUST NOT** buffer without bound. The read side **SHOULD** consume promptly to avoid blocking the peer.
+
+### 4.4 Binding B (informative): HTTP + SSE
+
+- Method = `POST /ari/<method>`; the request body is a JSON-RPC request object and the response body is a JSON-RPC response object.
+- Events = the SSE stream from `GET /ari/events`, where `data:` is the JSON of an `event` notification.
+- The core data model, `seq` semantics, and error codes are identical to Binding A.
+- The frame limit and backpressure are handled by the HTTP layer.
+
+---
+
+## 5. Handshake and Version Negotiation
 
 ### 5.1 initialize
 
@@ -153,61 +151,61 @@ ARI 1.0 **不使用 server → client 请求**。人机交互采用「Harness �
 }}
 ```
 
-### 5.2 规则
+### 5.2 Rules
 
-- `protocolVersion` 为 **MAJOR-only 整数**。
-- Harness 支持所请求 MAJOR ⇒ **必须**正常应答（回自身 MAJOR）。
-- 不支持 ⇒ **必须**返回 `-32008`，`data.supportedVersions` 列出可用 MAJOR。**连接保持可用**，Shell **可以**用受支持 MAJOR **重试一次** `initialize`。
-- `initialize` 成功应答之前，除 `initialize` 外的一切方法 ⇒ `-32002`。
-- 已 initialize 的连接再次 `initialize` ⇒ `-32006`（不重协商；重协商**必须**重连）。
-- Shell **应当**随后发送 `initialized` 通知。该通知**不参与门控**：Harness 在 `initialize` 成功应答后即**必须**接受其余方法，`initialized` 缺失**不得**报错。
+- `protocolVersion` is a **MAJOR-only integer**.
+- The Harness supports the requested MAJOR ⇒ it **MUST** respond normally (returning its own MAJOR).
+- Unsupported ⇒ it **MUST** return `-32008`, with `data.supportedVersions` listing the available MAJORs. **The connection remains usable**, and the Shell **MAY** retry `initialize` **once** with a supported MAJOR.
+- Before `initialize` is successfully answered, every method other than `initialize` ⇒ `-32002`.
+- A second `initialize` on an already-initialized connection ⇒ `-32006` (no renegotiation; renegotiation **MUST** reconnect).
+- The Shell **SHOULD** then send the `initialized` notification. That notification **does not participate in gating**: after `initialize` is successfully answered, the Harness **MUST** accept the remaining methods, and a missing `initialized` **MUST NOT** produce an error.
 
-### 5.3 能力语义
+### 5.3 Capability Semantics
 
-`agentCapabilities` 中每个为 `false` 的能力，对应的方法/事件/参数**禁止**使用：
+For every capability in `agentCapabilities` that is `false`, the corresponding method/event/parameter **MUST NOT** be used:
 
-| 能力 | 为 `true` 时解锁 | 默认 |
+| Capability | Unlocks when `true` | Default |
 |---|---|---|
-| `reasoning` | `reasoning/delta` 事件 | `false` |
-| `question` | `question/requested`、`question/resolved` 事件；`question/respond` 方法 | `false` |
-| `approvalEditInput` | `approval/respond` 的 `amendedInput` 参数 | `false` |
-| `usage` | `usage/updated` 事件 | `false` |
-| `compactionEvents` | `compaction/performed` 事件 | `false` |
-| `replay` | `session/resume` 的 `since` 参数 | `false` |
-| `fileChanges` | `file/changed` 事件 | `false` |
-| `subagents` | `subagent/started`、`subagent/finished` 事件 | `false` |
-| `backgroundTasks` | `background/started`、`background/updated`、`background/finished` 事件 | `false` |
-| `fork` | `session/fork` 方法 | `false` |
-| `sessionList` | `session/list` 方法 | `false` |
+| `reasoning` | `reasoning/delta` event | `false` |
+| `question` | `question/requested`, `question/resolved` events; `question/respond` method | `false` |
+| `approvalEditInput` | the `amendedInput` parameter of `approval/respond` | `false` |
+| `usage` | `usage/updated` event | `false` |
+| `compactionEvents` | `compaction/performed` event | `false` |
+| `replay` | the `since` parameter of `session/resume` | `false` |
+| `fileChanges` | `file/changed` event | `false` |
+| `subagents` | `subagent/started`, `subagent/finished` events | `false` |
+| `backgroundTasks` | `background/started`, `background/updated`, `background/finished` events | `false` |
+| `fork` | `session/fork` method | `false` |
+| `sessionList` | `session/list` method | `false` |
 
-- Harness **禁止**发出未声明为 `true` 的能力所对应的事件。
-- Shell 调用被 `false` 门控的方法或传入被门控的参数 ⇒ `-32003`。
-- Shell **必须**忽略未知能力键（向前兼容）。
+- The Harness **MUST NOT** emit events corresponding to a capability not declared `true`.
+- A Shell calling a method gated by `false`, or passing a gated parameter ⇒ `-32003`.
+- The Shell **MUST** ignore unknown capability keys (forward compatibility).
 
 ---
 
-## 6. 方法总览
+## 6. Method Overview
 
-ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事件通道：
+ARI 1.0 has **10 request methods** in total, plus the `initialized` notification and the `event` event channel:
 
-| 方法 | 方向 | 门控 | 说明 |
+| Method | Direction | Gating | Description |
 |---|---|---|---|
-| `initialize` | C→S | — | 握手与能力协商（§5） |
-| `initialized` | C→S | — | 通知，不参与门控（§5.2） |
-| `session/new` | C→S | — | 建会话（§7.1） |
-| `session/resume` | C→S | — | 重放与重连（§7.2） |
-| `session/prompt` | C→S | — | 提交输入，入队（§7.3） |
-| `session/cancel` | C→S | — | 取消在飞 turn（§7.4） |
-| `session/fork` | C→S | `fork` | 从 turn 边界分叉（§7.5） |
-| `session/list` | C→S | `sessionList` | 列会话（§7.6） |
-| `shutdown` | C→S | — | 停机（§7.7） |
-| `approval/respond` | C→S | — | 审批作答（§10.1） |
-| `question/respond` | C→S | `question` | 提问作答（§10.2） |
-| `event` | S→C | — | 唯一通知通道（§9） |
+| `initialize` | C→S | — | Handshake and capability negotiation (§5) |
+| `initialized` | C→S | — | Notification, not part of gating (§5.2) |
+| `session/new` | C→S | — | Create a session (§7.1) |
+| `session/resume` | C→S | — | Replay and reconnect (§7.2) |
+| `session/prompt` | C→S | — | Submit input, enqueue (§7.3) |
+| `session/cancel` | C→S | — | Cancel the in-flight turn (§7.4) |
+| `session/fork` | C→S | `fork` | Fork from a turn boundary (§7.5) |
+| `session/list` | C→S | `sessionList` | List sessions (§7.6) |
+| `shutdown` | C→S | — | Shut down (§7.7) |
+| `approval/respond` | C→S | — | Answer an approval (§10.1) |
+| `question/respond` | C→S | `question` | Answer a question (§10.2) |
+| `event` | S→C | — | The sole notification channel (§9) |
 
 ---
 
-## 7. 会话生命周期
+## 7. Session Lifecycle
 
 ### 7.1 session/new
 
@@ -218,10 +216,10 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 { "jsonrpc":"2.0", "id":2, "result":{ "sessionId":"s_01J9", "nextSeq":1 } }
 ```
 
-- `cwd?`：工作目录提示。Harness **必须**自行校验，**不得**无条件信任。
-- 新会话初始状态为 **`idle`**，`nextSeq` = **1**。
-- Harness **禁止**在 `session/new` 应答之前发出该 session 的任何事件。
-- 初始状态为 `idle` 是定义的一部分，**不需要**发 `session/status` 事件。
+- `cwd?`: working-directory hint. The Harness **MUST** validate it itself and **MUST NOT** trust it unconditionally.
+- A new session's initial status is **`idle`** and `nextSeq` = **1**.
+- The Harness **MUST NOT** emit any event for the session before the `session/new` response.
+- The initial `idle` status is part of the definition; a `session/status` event is **not required**.
 
 ### 7.2 session/resume
 
@@ -238,13 +236,13 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 }}
 ```
 
-- `since` 省略 ⇒ 从头重放。
-- `since` 超出保留窗口**不是错误**：Harness **必须**退化为「`snapshot` + 自保留基点起的全部 `events`」，并以 `replayedFrom` 标明基点。仅当完全无日志可回放（`replay:false`）时才返回 `-32004`。
-- `since` > 当前水位 ⇒ `-32602`（Shell 侧 bug，**禁止**静默纠正）。
-- `sessionId` 未知 ⇒ `-32001`。**禁止**自动建会话。
-- **一致性切面**：应答中 `events` 的最后一条 `seq` < `nextSeq`；此后同一 session 的实时事件 `seq` **必须** ≥ `nextSeq`，**不重不漏**。
+- `since` omitted ⇒ replay from the beginning.
+- A `since` beyond the retention window **is not an error**: the Harness **MUST** degrade to "`snapshot` + all `events` from the retention base point" and indicate the base point with `replayedFrom`. It returns `-32004` only when there is no log at all to replay (`replay:false`).
+- `since` > the current watermark ⇒ `-32602` (a Shell-side bug; **MUST NOT** be silently corrected).
+- Unknown `sessionId` ⇒ `-32001`. A session **MUST NOT** be created automatically.
+- **Consistency cut**: in the response, the last `seq` of `events` < `nextSeq`; thereafter, live events for the same session **MUST** have `seq` ≥ `nextSeq`, with **no duplicates and no gaps**.
 
-`snapshot` schema：
+`snapshot` schema:
 
 ```jsonc
 { "status": "running" | "idle",
@@ -261,17 +259,17 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 ```jsonc
 // C→S
 { "jsonrpc":"2.0", "id":3, "method":"session/prompt", "params":{
-  "sessionId":"s_01J9", "content":[{"type":"text","text":"列出当前目录的文件"}] } }
+  "sessionId":"s_01J9", "content":[{"type":"text","text":"list the files in the current directory"}] } }
 // S→C
 { "jsonrpc":"2.0", "id":3, "result":{ "messageId":"m_01JA" } }
 ```
 
-- **并发 prompt = 入队，不拒绝、不隐式打断。** turn 运行中收到 `session/prompt`，Harness **必须**接受并追加到该 session 的 pending-input FIFO 队列。
-- `messageId` 的承诺范围**严格**是「**已持久入队**」——既不表示 turn 已开始，也不表示模型已看到。
-- **关联义务**：`turn/started` **必须**携带 `messageIds: string[]`，即该 turn 从队列 claim 的消息（可 ≥1 条）。否则回执在线上不可验证。
-- **队列上限**：实现**可以**设内部上限；超限时**必须**以 `-32005` 拒绝该次 prompt，**禁止**静默丢弃。
-- `content` 为 `ContentBlock[]`。ARI 1.0 仅定义 `{"type":"text","text":string}`；其他类型由扩展机制引入（§12）。
-- `sessionId` 未知 ⇒ `-32001`。
+- **A concurrent prompt is enqueued; it is neither rejected nor implicitly interrupted.** When `session/prompt` arrives while a turn is running, the Harness **MUST** accept it and append it to that session's pending-input FIFO queue.
+- The guarantee scope of `messageId` is **strictly** "**durably enqueued**" — it means neither that a turn has started nor that the model has seen it.
+- **Correlation obligation**: `turn/started` **MUST** carry `messageIds: string[]`, namely the messages the turn claimed from the queue (may be ≥1). Otherwise the receipt is unverifiable on the wire.
+- **Queue limit**: an implementation **MAY** set an internal limit; when exceeded, it **MUST** reject that prompt with `-32005` and **MUST NOT** silently drop it.
+- `content` is a `ContentBlock[]`. ARI 1.0 defines only `{"type":"text","text":string}`; other types are introduced by the extension mechanism (§12).
+- Unknown `sessionId` ⇒ `-32001`.
 
 ### 7.4 session/cancel
 
@@ -282,14 +280,14 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 { "jsonrpc":"2.0", "id":4, "result":{ "cancelledTurn":1, "droppedMessageIds":["m_01JB"] } }
 ```
 
-- 作用域 = **当前在飞 turn**，并**清空尚未 claim 的 pending-input 队列**（真正的停止）。否则队列会立刻重启工作，取消形同虚设。
-- 被取消的 turn **必须**结算为 `turn/completed{stopReason:"cancelled"}`（§8-I1）。
-- 被丢弃的入队消息经 `droppedMessageIds` 与 `snapshot.queue` 可观测，**不**另发事件。
-- 无在飞 turn 时 cancel 为**幂等空操作**。
-- `cause` 为可选不透明字符串；ARI 1.0 **不**定义闭式枚举（各 Harness 的取消原因是内部概念）。
-- `sessionId` 未知 ⇒ `-32001`。
+- Scope = the **current in-flight turn**, and it **clears the not-yet-claimed pending-input queue** (a real stop). Otherwise the queue would immediately restart work and cancellation would be a no-op in effect.
+- A cancelled turn **MUST** settle as `turn/completed{stopReason:"cancelled"}` (§8-I1).
+- Dropped enqueued messages are observable via `droppedMessageIds` and `snapshot.queue`; no separate event is emitted.
+- With no in-flight turn, cancel is an **idempotent no-op**.
+- `cause` is an optional opaque string; ARI 1.0 does **not** define a closed enumeration (each Harness's cancellation reasons are an internal concept).
+- Unknown `sessionId` ⇒ `-32001`.
 
-### 7.5 session/fork（cap: `fork`）
+### 7.5 session/fork (cap: `fork`)
 
 ```jsonc
 // C→S
@@ -299,26 +297,26 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
   "sessionId":"s_01J9b", "nextSeq":1, "forkedFrom":{ "sessionId":"s_01J9", "turn":3 } } }
 ```
 
-- 语义：以源 session 截至 `atTurn` 边界的历史为基础，创建**新的独立 session**。
-- `atTurn` 省略 ⇒ 以当前 turn 边界为准。
-- 新 session **必须**是全新的 `sessionId`，初始状态 `idle`，`nextSeq` = 1；**禁止**复用源 session 的 `seq` 空间。
-- 源 session **不受影响**（fork 不是 move）。
-- `atTurn` 不存在或不是 turn 边界 ⇒ `-32602`。
-- 能力为 `false` 时调用 ⇒ `-32003`。
+- Semantics: create a **new independent session** based on the source session's history up to the `atTurn` boundary.
+- `atTurn` omitted ⇒ the current turn boundary is used.
+- The new session **MUST** have a brand-new `sessionId`, initial status `idle`, and `nextSeq` = 1; the source session's `seq` space **MUST NOT** be reused.
+- The source session is **unaffected** (fork is not move).
+- `atTurn` does not exist or is not a turn boundary ⇒ `-32602`.
+- Called while the capability is `false` ⇒ `-32003`.
 
-### 7.6 session/list（cap: `sessionList`）
+### 7.6 session/list (cap: `sessionList`)
 
 ```jsonc
 // C→S
 { "jsonrpc":"2.0", "id":6, "method":"session/list", "params":{ "cwd":"/repo" } }
 // S→C
 { "jsonrpc":"2.0", "id":6, "result":{ "sessions":[
-  { "sessionId":"s_01J9", "status":"idle", "cwd":"/repo", "title":"修复登录", "createdAt":"2026-09-24T12:00:00Z" }
+  { "sessionId":"s_01J9", "status":"idle", "cwd":"/repo", "title":"Fix login", "createdAt":"2026-09-24T12:00:00Z" }
 ]}}
 ```
 
-- 仅返回调用方可访问的会话。`status` 取 `running|idle`。
-- 能力为 `false` 时调用 ⇒ `-32003`。
+- Returns only sessions accessible to the caller. `status` is `running|idle`.
+- Called while the capability is `false` ⇒ `-32003`.
 
 ### 7.7 shutdown
 
@@ -326,78 +324,78 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 { "jsonrpc":"2.0", "id":7, "method":"shutdown", "params":{} }   // → { "result": {} }
 ```
 
-- 应答后 Harness **禁止**再发事件。
-- 在飞 turn **直接放弃**——这是 §8-I1 结算不变量的**唯一豁免**。
-- Harness **应当**在有限时间内退出。
+- After the response, the Harness **MUST NOT** emit any further events.
+- The in-flight turn is **abandoned outright** — this is the **sole exemption** from the §8-I1 settlement invariant.
+- The Harness **SHOULD** exit within a bounded time.
 
-### 7.8 订阅模型
+### 7.8 Subscription Model
 
-- **隐式订阅**：连接对「本连接上 `session/new` 或 `session/resume` 成功的每个 session」自动订阅 `event`。**没有** subscribe 方法；唯一退订 = 关闭连接。
-- 同一 session **允许**多连接：事件**必须**广播到全部订阅连接；任一连接上的 `approval/respond` 对全体生效。
-- 跨 session 事件无序；**同一 session 在所有连接上必须按 `seq` 一致投递**。
+- **Implicit subscription**: a connection is automatically subscribed to `event` for every session that `session/new` or `session/resume` succeeds for on that connection. There is **no** subscribe method; the only unsubscribe is closing the connection.
+- Multiple connections for the same session are **allowed**: events **MUST** be broadcast to all subscribed connections; an `approval/respond` on any one connection takes effect for all.
+- Events are unordered across sessions; **within one session, delivery MUST be consistent by `seq` across all connections**.
 
-### 7.9 顺序保证
+### 7.9 Ordering Guarantees
 
-- `session/prompt` 的应答**必须**先于「由该 prompt 引起的任何事件」发出。否则 Shell 无法归属事件。
-- 其他来源（先前入队消息、后台工作）的事件**可以**与之交错。
-- 事件在单 session 内**必须**严格按 `seq` 递增投递。
-
----
-
-## 8. Turn 结算不变量
-
-以下不变量**必须**成立：
-
-- **I1（结算）**：同一 session 内，每个 `turn/started` **最终恰好**对应一条 `turn/completed`——无论中途发生 error、cancel、审批拒绝还是工具失败。
-  **唯一豁免**：连接/进程终止（`shutdown` 或崩溃），此时在飞 turn 不再结算，Shell 以连接关闭为准。
-- **I2（error 不替代结算）**：`session/error` 是**带外诊断**，**禁止**替代 `turn/completed`。致命错误也**必须**以 `turn/completed{stopReason:"error"}` 收尾。
-- **I3（顺序）**：致命错误**必须**先发 `session/error`，紧接 `turn/completed{stopReason:"error"}`。只监听 `turn/completed` 的极简 Shell 也能正确收尾。
-- **I4（可重试错误不结束 turn）**：`session/error{retryable:true}` 表示 Harness 将自行重试，**不要求** turn 结束；同一 turn **可以**出现多条。
-- **I5（无 turn 的 error）**：`session/error.turn` **可以**缺省——错误可发生在任何 turn 之前。缺省时 Shell **禁止**假定存在在飞 turn。
-- **I6（不卡 running）**：任何终止路径之后，session **必须**达到 `session/status:"idle"`。
-- **I7（交互终局）**：每个 `approval/requested` / `question/requested` **恰好**对应一条 `*/resolved`。
-
-**Shell 实现指引**：以 `turn/completed` 判定单 turn 结束；以 `session/status:"idle"` 判定「不会再自动干活」；以 `session/error` 取诊断信息。三者不可互相顶替。
+- The response to `session/prompt` **MUST** be sent before any event caused by that prompt. Otherwise the Shell cannot attribute events.
+- Events from other sources (previously enqueued messages, background work) **MAY** interleave with it.
+- Within a single session, events **MUST** be delivered in strictly increasing `seq` order.
 
 ---
 
-## 9. 事件流
+## 8. Turn Settlement Invariants
 
-### 9.1 信封与类型
+The following invariants **MUST** hold:
+
+- **I1 (settlement)**: within a session, every `turn/started` **ultimately corresponds to exactly one** `turn/completed` — regardless of an intervening error, cancel, approval denial, or tool failure.
+  **Sole exemption**: connection/process termination (`shutdown` or a crash), in which case the in-flight turn is no longer settled and the Shell treats connection close as authoritative.
+- **I2 (error does not replace settlement)**: `session/error` is **out-of-band diagnostics** and **MUST NOT** replace `turn/completed`. Even a fatal error **MUST** be concluded with `turn/completed{stopReason:"error"}`.
+- **I3 (ordering)**: for a fatal error, `session/error` **MUST** be emitted first, immediately followed by `turn/completed{stopReason:"error"}`. A minimal Shell that listens only for `turn/completed` can still conclude correctly.
+- **I4 (retryable errors do not end the turn)**: `session/error{retryable:true}` means the Harness will retry on its own and does **not require** the turn to end; multiple such errors **MAY** occur in the same turn.
+- **I5 (error without a turn)**: `session/error.turn` **MAY** be absent — an error can occur before any turn. When absent, the Shell **MUST NOT** assume an in-flight turn exists.
+- **I6 (never stuck in running)**: after any termination path, the session **MUST** reach `session/status:"idle"`.
+- **I7 (interaction finality)**: every `approval/requested` / `question/requested` corresponds to **exactly one** `*/resolved`.
+
+**Shell implementation guidance**: use `turn/completed` to determine the end of a single turn; use `session/status:"idle"` to determine that "no further work will happen automatically"; use `session/error` for diagnostics. The three MUST NOT substitute for one another.
+
+---
+
+## 9. Event Stream
+
+### 9.1 Envelope and Types
 
 ```jsonc
 { "jsonrpc":"2.0", "method":"event",
   "params": { "sessionId": "s_01J9", "seq": 4, "type": "tool/started", "...payload" } }
 ```
 
-| 字段 | 类型 | 规则 |
+| Field | Type | Rule |
 |---|---|---|
-| `sessionId` | string | 不透明。建议 `s_` + ULID |
-| `seq` | integer | **1 起**，每 session 单调 +1，**无空洞**。重放与实时共用同一空间 |
-| `type` | string | 事件类型，见 §9.2 / §9.3 |
-| `turn` | integer? | **1 起**，每 session 单调 +1 |
-| `messageId` / `callId` / `approvalId` / `questionId` / `taskId` | string | 不透明。建议前缀 `m_` / `t_` / `ap_` / `q_` / `bg_` + ULID |
+| `sessionId` | string | Opaque. `s_` + ULID recommended |
+| `seq` | integer | **Starts at 1**, monotonic +1 per session, **no gaps**. Replay and live share the same space |
+| `type` | string | Event type, see §9.2 / §9.3 |
+| `turn` | integer? | **Starts at 1**, monotonic +1 per session |
+| `messageId` / `callId` / `approvalId` / `questionId` / `taskId` | string | Opaque. Prefix `m_` / `t_` / `ap_` / `q_` / `bg_` + ULID recommended |
 
-### 9.2 必需事件（10）
+### 9.2 Required Events (10)
 
-| type | payload | 说明 |
+| type | payload | Description |
 |---|---|---|
-| `session/status` | `status:"running"\|"idle"` | 状态**变更**时发出；`idle` 即「重试/队列均结束」 |
-| `turn/started` | `turn, messageIds:string[]` | claim 了哪些入队消息 |
-| `turn/completed` | `turn, stopReason:"end_turn"\|"max_tokens"\|"cancelled"\|"refusal"\|"error"` | 每个 started 恰好一条 |
-| `message/delta` | `turn?, text` | assistant 文本增量 |
-| `tool/started` | `turn?, callId, name, input?` | 工具调用开始 |
-| `tool/updated` | `callId, status:"pending"\|"running", title?, outputDelta?` | 进度与输出增量 |
-| `tool/completed` | `callId, status:"success"\|"error", output?, meta?` | `meta` 不透明，供 UI 使用 |
-| `approval/requested` | `approvalId, toolCallId?, toolName?, reason?, options?` | `options` 缺省 = 三枚举（§10.1） |
-| `approval/resolved` | `approvalId, decision:"allow_once"\|"allow_always"\|"deny"\|"expired"\|"cancelled"` | 每个 requested 恰好一条 |
-| `session/error` | `error{ code, message, retryable? }, turn?` | 带外诊断 |
+| `session/status` | `status:"running"\|"idle"` | Emitted on status **change**; `idle` means "retries/queue have all finished" |
+| `turn/started` | `turn, messageIds:string[]` | which enqueued messages were claimed |
+| `turn/completed` | `turn, stopReason:"end_turn"\|"max_tokens"\|"cancelled"\|"refusal"\|"error"` | exactly one per started |
+| `message/delta` | `turn?, text` | assistant text delta |
+| `tool/started` | `turn?, callId, name, input?` | tool call begins |
+| `tool/updated` | `callId, status:"pending"\|"running", title?, outputDelta?` | progress and output delta |
+| `tool/completed` | `callId, status:"success"\|"error", output?, meta?` | `meta` is opaque, for UI use |
+| `approval/requested` | `approvalId, toolCallId?, toolName?, reason?, options?` | `options` absent = the three enumerations (§10.1) |
+| `approval/resolved` | `approvalId, decision:"allow_once"\|"allow_always"\|"deny"\|"expired"\|"cancelled"` | exactly one per requested |
+| `session/error` | `error{ code, message, retryable? }, turn?` | out-of-band diagnostics |
 
-工具状态机收敛为：**`started → (updated*) → completed`**。`tool/completed` 是唯一终局事件。
+The tool state machine converges to: **`started → (updated*) → completed`**. `tool/completed` is the only terminal event.
 
-### 9.3 能力事件（11）
+### 9.3 Capability Events (11)
 
-| type | 门控 | payload |
+| type | Gating | payload |
 |---|---|---|
 | `reasoning/delta` | `reasoning` | `turn?, text` |
 | `question/requested` | `question` | `questionId, questions[{id, question, detail?, options?, multiSelect?}]` |
@@ -411,19 +409,19 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
 | `background/updated` | `backgroundTasks` | `taskId, status:"running"\|"pending", title?, outputDelta?` |
 | `background/finished` | `backgroundTasks` | `taskId, status:"success"\|"error"\|"cancelled", output?` |
 
-**关于 subagent**：ARI 1.0 只标准化**事件面**——「有一个子 agent 在跑 / 跑完了」。子 agent 的**编排**（spawn/send/wait/close）**不在** ARI 内。若 Harness 暴露子会话，`subagent/started.sessionId` 给出其 `sessionId`，Shell **可以**通过 `session/resume` 挂载该子会话；未暴露时该字段缺省，Shell **不得**假定可挂载。
+**On subagents**: ARI 1.0 standardizes only the **event surface** — "a child agent is running / has finished". Child-agent **orchestration** (spawn/send/wait/close) is **not** part of ARI. If the Harness exposes a child session, `subagent/started.sessionId` gives its `sessionId`, and the Shell **MAY** attach to that child session via `session/resume`; when not exposed, the field is absent and the Shell **MUST NOT** assume it can attach.
 
-**关于 background**：同样只标准化事件面，**不**提供控制 API（启动/停止/查询）。需要控制的场景走扩展机制（§12）。
+**On background**: likewise only the event surface is standardized; no control API (start/stop/query) is provided. Scenarios that need control use the extension mechanism (§12).
 
-### 9.4 排序与重放
+### 9.4 Ordering and Replay
 
-- 单 session 内**必须**严格按 `seq`；跨 session 无序。
-- `session/resume{since}` 用它补洞（§7.2）。
-- **pending 状态可推导**：`approval/requested` 未收到对应 `approval/resolved` = waiting；断线重连后由 `snapshot.pendingApprovals` / `snapshot.pendingQuestions` 给出当前挂起集。
+- Within a single session, ordering **MUST** be strictly by `seq`; across sessions it is unordered.
+- `session/resume{since}` uses it to fill gaps (§7.2).
+- **pending state is derivable**: an `approval/requested` with no corresponding `approval/resolved` received = waiting; after reconnecting, the current pending set is given by `snapshot.pendingApprovals` / `snapshot.pendingQuestions`.
 
 ---
 
-## 10. 人机交互
+## 10. Human-in-the-Loop Interaction
 
 ### 10.1 approval/respond
 
@@ -434,13 +432,13 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
   "decision":"allow_once", "amendedInput": null } }
 ```
 
-- 决策枚举：`allow_once` | `allow_always` | `deny`。
-- `approval/requested.options`（缺省 = 上述三枚举）：`[{ "id":"allow_once"|"allow_always"|"deny", "label": string }]`。
-- Shell **禁止**发送未出现在 `options` 中的 decision（Harness 不想要 `allow_always` 就不下发它）。违反 ⇒ `-32602`。
-- `amendedInput` 仅在 `agentCapabilities.approvalEditInput` 为 `true` 时可用；否则 ⇒ `-32003`。
-- **失败关闭（fail-closed）**：Shell 消失或超时不得被解释为允许。Harness 自行兜底时**必须**发 `approval/resolved{decision:"expired"|"cancelled"}`。
+- Decision enumeration: `allow_once` | `allow_always` | `deny`.
+- `approval/requested.options` (absent = the three enumerations above): `[{ "id":"allow_once"|"allow_always"|"deny", "label": string }]`.
+- The Shell **MUST NOT** send a decision that does not appear in `options` (if the Harness does not want `allow_always`, it simply does not offer it). Violation ⇒ `-32602`.
+- `amendedInput` is available only when `agentCapabilities.approvalEditInput` is `true`; otherwise ⇒ `-32003`.
+- **fail-closed**: the Shell disappearing or timing out MUST NOT be interpreted as an allow. When the Harness falls back on its own, it **MUST** emit `approval/resolved{decision:"expired"|"cancelled"}`.
 
-### 10.2 question/respond（cap: `question`）
+### 10.2 question/respond (cap: `question`)
 
 ```jsonc
 // C→S
@@ -449,144 +447,144 @@ ARI 1.0 共 **10 个请求方法**，外加 `initialized` 通知与 `event` 事�
   "answers":[ { "id":"which", "values":["A"] } ] } }
 ```
 
-- `question/requested.questions`：`[{ id, question, detail?, options?:[{id,label,detail?}], multiSelect? }]`。
-- `options` 缺省 = 自由文本作答（`values` 为字符串数组）。
-- **`answers: []` = 显式整体放弃作答**；未出现在 `answers` 中的 question 视为跳过。
-- 终局：`question/resolved{outcome:"answered"|"declined"|"expired"}`。
+- `question/requested.questions`: `[{ id, question, detail?, options?:[{id,label,detail?}], multiSelect? }]`.
+- `options` absent = free-text answers (`values` is an array of strings).
+- **`answers: []` = explicitly declining to answer as a whole**; a question not appearing in `answers` is treated as skipped.
+- Finality: `question/resolved{outcome:"answered"|"declined"|"expired"}`.
 
-### 10.3 幂等与跨断线时效
+### 10.3 Idempotency and Validity Across Disconnects
 
-- 每个 `*/requested` 以**恰好一个** `*/resolved` 终结。
-- Harness **必须**为每个交互 id 记住最后一次终局：
-  - 同 id + 同 decision 重发 ⇒ **幂等返回 `{}`**（网络重试安全）
-  - 同 id + **不同** decision，或 id 不存在 ⇒ `-32007`
-- 挂起交互在 session 存活期间**跨断线保持有效，且不换 id**。重放出的 `*/requested` 与断线前是同一条 live 请求，Shell 按 id 去重即可。
-- Harness **禁止**静默过期；自行兜底时**必须**发 `*/resolved`。
-- 重连后的挂起集另由 `snapshot.pendingApprovals` / `snapshot.pendingQuestions` 给出；两条通道对同一 id **必须**一致。
+- Every `*/requested` terminates with **exactly one** `*/resolved`.
+- The Harness **MUST** remember the last final outcome for each interaction id:
+  - same id + same decision resent ⇒ **idempotently returns `{}`** (safe for network retries)
+  - same id + a **different** decision, or an id that does not exist ⇒ `-32007`
+- While the session is alive, a pending interaction **remains valid across disconnects and keeps its id**. A replayed `*/requested` is the same live request as before the disconnect; the Shell need only deduplicate by id.
+- The Harness **MUST NOT** expire silently; when it falls back on its own it **MUST** emit `*/resolved`.
+- After reconnection, the pending set is additionally given by `snapshot.pendingApprovals` / `snapshot.pendingQuestions`; the two channels **MUST** agree for the same id.
 
 ---
 
-## 11. 错误
+## 11. Errors
 
-### 11.1 错误码
+### 11.1 Error Codes
 
-| code | 名称 | 触发 | 可重试 |
+| code | Name | Trigger | Retryable |
 |---|---|---|---|
-| -32700 | `parse_error` | JSON 解析失败 | 否 |
-| -32600 | `invalid_request` | 非法 JSON-RPC 对象 | 否 |
-| -32601 | `method_not_found` | 方法不存在 | 否 |
-| -32602 | `invalid_params` | 参数非法（含 `since` 越界、decision 不在 options、`atTurn` 非边界） | 否 |
-| -32603 | `internal_error` | 内部错误 | 视情况 |
-| -32001 | `session_not_found` | `sessionId` 未知（**禁止**自动建会话） | 否 |
-| -32002 | `not_initialized` | `initialize` 成功应答前调用任何方法 | 是（先 initialize） |
-| -32003 | `unsupported_capability` | 使用声明为 `false` 的能力所门控的方法/参数 | 否 |
-| -32004 | `replay_unavailable` | 无日志可回放（`replay:false`） | 否 |
-| -32005 | `queue_full` | pending-input 队列超上限（**禁止**静默丢弃） | 是（稍后重发） |
-| -32006 | `already_initialized` | 已 initialize 的连接再次 initialize | 否 |
-| -32007 | `unknown_interaction` | 交互 id 不存在，或不同 decision 重复作答 | 否 |
-| -32008 | `unsupported_protocol_version` | 请求的 MAJOR 不受支持（`data.supportedVersions`） | 是（换版本重试一次） |
+| -32700 | `parse_error` | JSON parse failure | No |
+| -32600 | `invalid_request` | invalid JSON-RPC object | No |
+| -32601 | `method_not_found` | method does not exist | No |
+| -32602 | `invalid_params` | invalid parameters (including `since` out of range, decision not in options, `atTurn` not a boundary) | No |
+| -32603 | `internal_error` | internal error | Depends |
+| -32001 | `session_not_found` | unknown `sessionId` (a session **MUST NOT** be created automatically) | No |
+| -32002 | `not_initialized` | any method called before `initialize` is successfully answered | Yes (initialize first) |
+| -32003 | `unsupported_capability` | using a method/parameter gated by a capability declared `false` | No |
+| -32004 | `replay_unavailable` | no log available to replay (`replay:false`) | No |
+| -32005 | `queue_full` | pending-input queue over its limit (it **MUST NOT** be silently dropped) | Yes (resend later) |
+| -32006 | `already_initialized` | a second initialize on an already-initialized connection | No |
+| -32007 | `unknown_interaction` | interaction id does not exist, or a repeat answer with a different decision | No |
+| -32008 | `unsupported_protocol_version` | requested MAJOR unsupported (`data.supportedVersions`) | Yes (retry once with another version) |
 
-- `-32000`…`-32099` 为 ARI/JSON-RPC 保留区间。
-- **不**定义请求级取消码（如 ACP 的 `-32800`）：取消是一等方法 `session/cancel`。
+- `-32000`…`-32099` is the range reserved for ARI/JSON-RPC.
+- No request-level cancellation code (such as ACP's `-32800`) is defined: cancellation is the first-class method `session/cancel`.
 
-### 11.2 事件中的错误
+### 11.2 Errors in Events
 
-`session/error` 的 `error` 对象复用 `{ code, message, retryable? }`，`code` 取值同上。事件中的错误**不**终止连接。
-
----
-
-## 12. 扩展机制
-
-ARI 1.0 通过**扩展**而非版本承诺来容纳未标准化的能力。
-
-- **`_meta`**：任何对象**可以**带 `_meta` 自由字段。Shell **必须**忽略其内容。
-- **保留前缀**：以 `_` 开头的字段名保留给规范使用；实现**禁止**自行使用。
-- **扩展事件**：扩展事件类型**必须**以 `x-` 开头（如 `x-vendor/pty-resized`）。Shell **必须**忽略未知 `type`。
-- **扩展方法**：扩展方法名**必须**以 `x-` 开头（如 `x-vendor/task/stop`）。
-- **未知字段**：Shell 与 Harness **必须**忽略彼此不认识的字段与能力键（向前兼容）。
-
-以下内容明确**不在** ARI 1.0，且**不需要**版本承诺即可由扩展提供：工具 schema 标准化、client tools 反转、PTC 事件、compaction 控制、中途转向（steer/inject）、审批策略修正、模型与权限模式设置、PTY/终端透传、子 agent 编排 API、后台任务控制 API。
+The `error` object of `session/error` reuses `{ code, message, retryable? }`, with `code` taking the values above. An error in an event does **not** terminate the connection.
 
 ---
 
-## 13. 安全考虑
+## 12. Extension Mechanism
 
-- **信任边界**：ARI 赋予 Shell 在用户环境中触发工具执行的能力。Binding A 下传输为同用户进程间 stdio；实现**禁止**将其暴露到不可信边界之外（网络、跨用户）而不加认证。
-- **审批失败关闭**：任何不确定性（超时、断连、解析失败）**必须**解释为拒绝，**禁止**解释为允许。
-- **资源上限**：1 MiB 帧上限与队列上限是**强制**的 DoS 防护，不得仅作为建议。
-- **`cwd` 与路径**：Harness **必须**校验 `session/new.cwd` 与工具参数中的路径，**禁止**假定其已在沙箱内。
-- **重放**：`session/resume` 会回放历史事件，其中可能含敏感内容。Harness **应当**将 session 可见性绑定到连接身份。
-- **`meta` 与 `_meta`**：**禁止**将安全决策建立在这两个字段上。
+ARI 1.0 accommodates non-standardized capabilities through **extensions** rather than version promises.
 
----
+- **`_meta`**: any object **MAY** carry free-form `_meta` fields. The Shell **MUST** ignore its contents.
+- **Reserved prefix**: field names beginning with `_` are reserved for the specification; implementations **MUST NOT** use them on their own.
+- **Extension events**: extension event types **MUST** begin with `x-` (e.g. `x-vendor/pty-resized`). The Shell **MUST** ignore unknown `type`.
+- **Extension methods**: extension method names **MUST** begin with `x-` (e.g. `x-vendor/task/stop`).
+- **Unknown fields**: the Shell and the Harness **MUST** ignore fields and capability keys they do not recognize in each other (forward compatibility).
 
-## 附录 A：一致性清单
-
-Harness 侧（可逐条测试）：
-
-1. `initialize` 前调用任何方法 ⇒ `-32002`。
-2. 重复 `initialize` ⇒ `-32006`。
-3. 不支持的 MAJOR ⇒ `-32008` 且连接仍可重试。
-4. 未知 `sessionId` ⇒ `-32001`，不自动建会话。
-5. `session/new` 应答前无该 session 的事件；`nextSeq` = 1。
-6. 事件 `seq` 自 1 起连续无空洞，重放与实时共用同一空间。
-7. `turn/started.messageIds` 非空，且其消息此前已入队。
-8. 每个 `turn/started` 恰好一条 `turn/completed`（含 error / cancel 路径）。
-9. 致命错误先 `session/error` 后 `turn/completed{stopReason:"error"}`。
-10. 每个 `approval/requested` 恰好一条 `approval/resolved`。
-11. 每个 `question/requested` 恰好一条 `question/resolved`（`question` 能力为 true 时）。
-12. 未声明为 `true` 的能力，其事件一个都不发。
-13. 被 `false` 门控的方法/参数 ⇒ `-32003`。
-14. `session/prompt` 应答先于该 prompt 引起的任何事件。
-15. turn 运行中 `session/prompt` 被接受并排队，不打断在飞 turn。
-16. 队列超限 ⇒ `-32005`，不静默丢弃。
-17. `session/cancel` 结算在飞 turn 为 `cancelled`，并清空未 claim 队列。
-18. `session/resume{since}` 的 `events` 末条 `seq` < `nextSeq`，之后实时事件 ≥ `nextSeq`，不重不漏。
-19. `since` 超出保留窗口 ⇒ 返回 `snapshot` + `replayedFrom`，而非报错。
-20. 同 id 同 decision 重复 `approval/respond` ⇒ `{}`；不同 decision ⇒ `-32007`。
-21. 任一事件序列化后 ≤ 1 MiB，且 stdout 无杂质。
-22. 任何终止路径后最终达到 `session/status:"idle"`（除连接终止）。
-
-Shell 侧：
-
-23. 忽略未知事件 `type`、未知字段、未知能力键。
-24. 不发送未出现在 `options` 中的 decision。
-25. 断线后以 `session/resume` 重建状态，以 `snapshot` 恢复挂起交互。
+The following are explicitly **not** in ARI 1.0, and can be provided by extensions without a version promise: tool schema standardization, client tools inversion, PTC events, compaction control, mid-flight steering (steer/inject), approval policy amendment, model and permission-mode settings, PTY/terminal passthrough, child-agent orchestration API, background-task control API.
 
 ---
 
-## 附录 B：与现有实现的映射
+## 13. Security Considerations
+
+- **Trust boundary**: ARI gives the Shell the ability to trigger tool execution in the user's environment. Under Binding A, transport is stdio between processes of the same user; implementations **MUST NOT** expose it beyond a trusted boundary (network, cross-user) without authentication.
+- **Approval fail-closed**: any uncertainty (timeout, disconnect, parse failure) **MUST** be interpreted as a denial and **MUST NOT** be interpreted as an allow.
+- **Resource limits**: the 1 MiB frame limit and the queue limit are **mandatory** DoS protections and MUST NOT be treated as mere recommendations.
+- **`cwd` and paths**: the Harness **MUST** validate `session/new.cwd` and paths in tool arguments and **MUST NOT** assume they are already inside a sandbox.
+- **Replay**: `session/resume` replays historical events, which may contain sensitive content. The Harness **SHOULD** bind session visibility to connection identity.
+- **`meta` and `_meta`**: security decisions **MUST NOT** be based on these two fields.
+
+---
+
+## Appendix A: Conformance Checklist
+
+Harness side (testable item by item):
+
+1. Calling any method before `initialize` ⇒ `-32002`.
+2. A duplicate `initialize` ⇒ `-32006`.
+3. An unsupported MAJOR ⇒ `-32008`, and the connection can still retry.
+4. An unknown `sessionId` ⇒ `-32001`; no session is created automatically.
+5. No events for the session before the `session/new` response; `nextSeq` = 1.
+6. Event `seq` starts at 1 and is contiguous with no gaps; replay and live share the same space.
+7. `turn/started.messageIds` is non-empty, and its messages were previously enqueued.
+8. Exactly one `turn/completed` per `turn/started` (including error / cancel paths).
+9. A fatal error emits `session/error` first, then `turn/completed{stopReason:"error"}`.
+10. Exactly one `approval/resolved` per `approval/requested`.
+11. Exactly one `question/resolved` per `question/requested` (when the `question` capability is true).
+12. No events are emitted for a capability not declared `true`.
+13. A method/parameter gated by `false` ⇒ `-32003`.
+14. The `session/prompt` response precedes any event caused by that prompt.
+15. While a turn is running, `session/prompt` is accepted and queued without interrupting the in-flight turn.
+16. Queue over its limit ⇒ `-32005`; nothing is silently dropped.
+17. `session/cancel` settles the in-flight turn as `cancelled` and clears the unclaimed queue.
+18. For `session/resume{since}`, the last `seq` of `events` < `nextSeq`, and live events afterward ≥ `nextSeq`, with no duplicates and no gaps.
+19. A `since` beyond the retention window ⇒ returns `snapshot` + `replayedFrom` rather than an error.
+20. A repeated `approval/respond` with the same id and same decision ⇒ `{}`; a different decision ⇒ `-32007`.
+21. Any event is ≤ 1 MiB after serialization, and stdout contains no extraneous output.
+22. Any termination path ultimately reaches `session/status:"idle"` (except connection termination).
+
+Shell side:
+
+23. Ignores unknown event `type`, unknown fields, and unknown capability keys.
+24. Does not send a decision that does not appear in `options`.
+25. After a disconnect, rebuilds state with `session/resume` and restores pending interactions from `snapshot`.
+
+---
+
+## Appendix B: Mapping to Existing Implementations
 
 | ARI | DSH | Codex CLI / App Server | ZCode | OpenCode | Pi | ACP |
 |---|---|---|---|---|---|---|
-| `initialize` | SDK `initialize`（补版本协商） | app-server `initialize` | V4 握手 + `HostCapabilities` | — | RPC 握手 | `initialize` |
-| `session/new` | `agents.create` | `thread/start` | `createSession` | `session.create` | 建 agent | `session/new` |
-| `session/resume` | `agents.resume` + 事件转发 | rollout 重放 | 订阅 watermark | `/api/event` 重连 | — | `session/load` |
+| `initialize` | SDK `initialize` (adds version negotiation) | app-server `initialize` | V4 handshake + `HostCapabilities` | — | RPC handshake | `initialize` |
+| `session/new` | `agents.create` | `thread/start` | `createSession` | `session.create` | create agent | `session/new` |
+| `session/resume` | `agents.resume` + event forwarding | rollout replay | subscribe watermark | `/api/event` reconnect | — | `session/load` |
 | `session/prompt` | SDK `session/prompt`→`messageId` | `turn/start` | `sendText` | `session.prompt` | `prompt` | `session/prompt` |
 | `session/cancel` | `cancel(cause)` | `Op::Interrupt` | `stop` | fiber cancel | `abort` | `session/cancel` |
 | `session/fork` | fork-at-turn-boundary | `InitialHistory::Forked` | `forkAssistant` | fork | fork | — |
-| `session/list` | `list_agents` 类 | `thread/list` | — | — | — | `session/list` |
-| `event` | `session.event` + `session.status` | 通知（三级坐标信封） | 投影 + delta | EventV2 / SSE | runtime 事件 | `session/update` |
+| `session/list` | `list_agents`-like | `thread/list` | — | — | — | `session/list` |
+| `event` | `session.event` + `session.status` | notification (three-level coordinate envelope) | projection + delta | EventV2 / SSE | runtime events | `session/update` |
 | `message/delta` | `agent/assistant-stream` | `AgentMessageContentDelta` | `row.delta` | `message.part.updated` | `message_update` | `agent_message_chunk` |
-| `reasoning/delta` | 流式 reasoning | `ReasoningContentDelta` | reasoning row | reasoning part | — | `agent_thought_chunk` |
-| `tool/started\|updated\|completed` | `tool/call` / `tool/result` | `item/started\|completed` | `toolCall` row | tool part 状态机 | `tool_execution_*` | `tool_call(_update)` |
-| `approval/*` | `approval/request` waterfall | `ExecApprovalRequest` + `ReviewDecision` | `pendingInteractions` + `resolveInteraction` | `permission.asked/replied` | 无内置权限 | `session/request_permission` |
-| `question/*` | `user-questions` seam | — | `userInput` | `question.asked/replied` | 扩展 UI 对话框 | `elicitation/create` |
-| `usage/updated` | usage 事件 | `thread/tokenUsage/updated` | `usage` StatePatch | usage part | usage | `usage_update` |
+| `reasoning/delta` | streaming reasoning | `ReasoningContentDelta` | reasoning row | reasoning part | — | `agent_thought_chunk` |
+| `tool/started\|updated\|completed` | `tool/call` / `tool/result` | `item/started\|completed` | `toolCall` row | tool part state machine | `tool_execution_*` | `tool_call(_update)` |
+| `approval/*` | `approval/request` waterfall | `ExecApprovalRequest` + `ReviewDecision` | `pendingInteractions` + `resolveInteraction` | `permission.asked/replied` | no built-in permissions | `session/request_permission` |
+| `question/*` | `user-questions` seam | — | `userInput` | `question.asked/replied` | extension UI dialog | `elicitation/create` |
+| `usage/updated` | usage event | `thread/tokenUsage/updated` | `usage` StatePatch | usage part | usage | `usage_update` |
 | `compaction/performed` | `compaction/*` | `ContextCompacted` | `Compact*` | `session.compacted` | `compaction_*` | unstable |
-| `subagent/*` | provider + 控制工具 | SubAgentActivity item | 子 session + 镜像 | 子 session（自订阅） | 无 | 无 |
-| `background/*` | jobs | `RunUserShellCommand` | `backgroundWorks` | 弱 | 无 | 无 |
-| `session/error` | `agent/request-error` | `StreamError` | 错误状态 | `RetryPart` | `auto_retry_*` | — |
+| `subagent/*` | provider + control tools | SubAgentActivity item | child session + mirror | child session (self-subscribing) | none | none |
+| `background/*` | jobs | `RunUserShellCommand` | `backgroundWorks` | weak | none | none |
+| `session/error` | `agent/request-error` | `StreamError` | error state | `RetryPart` | `auto_retry_*` | — |
 
-映射原则：**改信封，不改语义**。Harness 内部的 compaction 算法、PTC、工具管线、存储格式**不**因适配 ARI 而改变。
+Mapping principle: **change the envelope, not the semantics**. The Harness's internal compaction algorithms, PTC, tool pipeline, and storage formats do **not** change in order to adapt to ARI.
 
 ---
 
-## 附录 C：与 ACP / MCP 的关系
+## Appendix C: Relationship to ACP / MCP
 
-- **MCP** 解决**工具接入**（Harness ↔ 工具）。ARI 不重复它；ARI 只规定工具**调用**的事件形状。两者正交，可同时使用。
-- **ACP** 解决 **editor ↔ agent** 的会话协议，与 ARI 目标重叠。ARI 的差异：
-  1. **不用 server→client 请求**（§3）——交互走「事件 + respond 方法」，Shell 无需请求路由器。
-  2. **prompt 回执 ≠ turn 结局**：`session/prompt` 只承诺入队，turn 结算由 `turn/completed` 承载。ACP v1 中 `session/prompt` 的响应即 turn 结束。
-  3. **不采用 client tools 反转**：ACP v2 草案已删除整个 client 执行面。
-  4. **交互有终局事件**（`*/resolved`），断线重连后挂起状态可推导。
+- **MCP** solves **tool integration** (Harness ↔ tools). ARI does not duplicate it; ARI specifies only the event shape of tool **calls**. The two are orthogonal and can be used together.
+- **ACP** solves the **editor ↔ agent** session protocol, which overlaps with ARI's goal. ARI's differences:
+  1. **No server→client requests** (§3) — interaction goes through "event + respond method", and the Shell needs no request router.
+  2. **prompt receipt ≠ turn outcome**: `session/prompt` promises only enqueueing; turn settlement is carried by `turn/completed`. In ACP v1, the `session/prompt` response itself was the end of the turn.
+  3. **client tools inversion is not adopted**: the ACP v2 draft has removed the entire client execution surface.
+  4. **Interactions have a final event** (`*/resolved`), and pending state is derivable after reconnect.

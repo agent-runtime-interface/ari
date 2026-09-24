@@ -1,85 +1,95 @@
+**English** · [中文](README.zh-CN.md)
+
 # ARI
 
-> ARI = **Agent Runtime Interface**，一套面向 Coding Agent Harness 的运行时契约。
-> 状态：**ARI 1.0** · 许可：Apache-2.0
+> ARI = **Agent Runtime Interface** — a runtime interface specification for coding-agent harnesses.
+> Status: **ARI 1.0** · License: Apache-2.0
 
-一个 Shell（IDE 插件、TUI、Web UI、自动化脚本）想要驱动不同的 Coding Agent runtime，今天必须为每一家写一套适配器：DSH 有 SDK JSON-RPC，Codex 有 app-server，ZCode 有 Protocol V4，OpenCode 是 HTTP+SSE，Pi 是 RPC——方法名、事件名、完成语义、审批形状各不相同。
+A shell (IDE plugin, TUI, web UI, automation script) that wants to drive different coding agent runtimes today has to write a bespoke adapter for every vendor: DSH has SDK JSON-RPC, Codex has app-server, ZCode has Protocol V4, OpenCode is HTTP+SSE, Pi is RPC — with different method names, event names, completion semantics, and approval shapes.
 
-ARI 的出发点是：**这些 runtime 内部其实共享同一套运行时抽象**，值得被标准化一次。
+ARI's starting point: **these runtimes already share the same set of runtime abstractions internally**, and those are worth standardizing once.
 
-## 这是什么
+## What this is
 
-把「会话 / 事件 / turn / 工具调用生命周期 / 人机交互 / 取消 / 用量 / 压缩事件」这些**所有实现都有的运行时概念**标准化，使一个 Shell 能以同一套代码驱动多个 runtime。
+Standardize the runtime concepts that **every implementation has** — session / events / turn / tool-call lifecycle / human interaction / cancellation / usage / compaction events — so that a single shell can drive multiple runtimes with the same code.
 
-**ARI 1.0 = 10 个请求方法 + 21 种事件 + 1 个握手**，规范性定义见 **[SPEC.md](SPEC.md)**。
+**ARI 1.0 = 10 request methods + 21 events + 1 handshake**; the normative definition is in **[SPEC.md](SPEC.md)**.
 
-- 传输：JSON-RPC 2.0 over stdio，newline-delimited（规范性 binding A）；HTTP + SSE 为信息性 binding B，核心数据模型不变。
-- 两个关键区分：**prompt 回执 ≠ turn 结局**（回执只承诺"已持久入队"）；**`session/error` 永不替代 `turn/completed`**（前者是诊断，后者才是收尾）。
-- 能力协商：Harness 在 `initialize` 里如实声明 `reasoning` / `question` / `usage` / `compactionEvents` / `replay` / `fileChanges` / `subagents` / `backgroundTasks` / `fork` / `sessionList` 等能力位。**声明为 `false` 的能力，一个事件都不发**——没有悬空的能力位。
-- 只使用 client→server 请求与 server→client 通知，**不使用 server→client 请求**：人机交互走「事件 + respond 方法」，Shell 无需请求路由器。
+- Transport: JSON-RPC 2.0 over stdio, newline-delimited (normative binding A); HTTP + SSE is informative binding B, and the core data model is unchanged.
+- Two key distinctions: **a prompt receipt ≠ the turn outcome** (the receipt only promises "durably enqueued"); **`session/error` never substitutes for `turn/completed`** (the former is diagnostics, the latter is the only closing).
+- Capability negotiation: in `initialize` the harness truthfully declares capability bits such as `reasoning` / `question` / `usage` / `compactionEvents` / `replay` / `fileChanges` / `subagents` / `backgroundTasks` / `fork` / `sessionList`. **A capability declared `false` emits not a single event** — no dangling capability bits.
+- Only client→server requests and server→client notifications are used; **no server→client requests**: human interaction goes through "event + respond method", so a shell needs no request router.
 
-## 这不是什么
+## What this is not
 
-- **不是工具协议**——不定义工具体、不定义工具 schema；工具接入交给 MCP（8/8 调查对象都已集成）。
-- **不是模型 API**——不规定 provider、路由、重试策略。
-- **不是 UI 规范**——事件是语义不是渲染，`meta` 对 UI 不透明。
-- **不规定 Harness 内部**——compaction 算法、PTC 执行、沙箱、存储格式、迭代上限全部留在 runtime 内。
+- **Not a tool protocol** — it defines no tool bodies and no tool schemas; tool integration is left to MCP (all 8/8 surveyed subjects already integrate it).
+- **Not a model API** — it prescribes no provider, routing, or retry policy.
+- **Not a UI specification** — events are semantics, not rendering; `meta` is opaque to the UI.
+- **Does not prescribe harness internals** — compaction algorithms, PTC execution, sandboxes, storage formats, and iteration limits all stay inside the runtime.
 
-## 目录
+## Directory
 
 ```
-SPEC.md                   **ARI 1.0 规范**（规范性）
-ARI-RESEARCH-REPORT.md    调研报告（推导与证据）
-                          Part A 现有实现调查（8 个对象）
-                          Part B 共同运行时抽象（B1–B13）
-                          Part C 差异与取舍（必标 / 应标 / capability / 不碰）
-                          Part D ARI 1.0 提案的推导（D1–D9）
-                          Part E 示例（4 个）
-research/                 证据基础：8 份源码级分报告 + 能力矩阵
+SPEC.md                   **ARI 1.0 specification** (normative)
+ARI-RESEARCH-REPORT.md    research report (derivation and evidence)
+                          Part A survey of existing implementations (8 subjects)
+                          Part B shared runtime abstractions (B1–B13)
+                          Part C differences and trade-offs (must-specify / should-specify / capability / leave alone)
+                          Part D derivation of the ARI 1.0 proposal (D1–D9)
+                          Part E examples (4)
+research/                 evidence base: 8 source-level sub-reports + capability matrix
   01-dsh.md               02-zcode.md            03-codex-cli.md
   04-opencode.md          05-pi.md               06-acp.md
   07-codex-app-server.md  08-related.md          capability-matrix.md
+packages/ari/             reference protocol library (TypeScript; runs directly on Node >= 22.6
+                          via native type stripping — no build step, no dependencies)
 LICENSE                   Apache-2.0
 ```
 
-## 怎么读
+## How to read
 
-| 你的目的 | 建议路径 |
+| Your goal | Suggested path |
 |---|---|
-| 动手实现一个兼容 Shell 或 Harness | **[SPEC.md](SPEC.md)**：§6 方法总览 → §7 生命周期 → §8 结算不变量 → 附录 A 一致性清单 |
-| 快速判断这个协议值不值得用 | README（本页）→ 报告 Part B → SPEC §6 |
-| 核对某个结论是否站得住 | 顺着 `[0x]` 编号进 `research/`，每份都有 `path` + `symbol` 级引用 |
-| 想知道为什么某个功能"不做" | 报告 Part C4 / D7，以及 SPEC §1.2 非目标、§12 扩展机制 |
+| Build a compatible shell or harness | **[SPEC.md](SPEC.md)**: §6 method overview → §7 lifecycle → §8 settlement invariants → Appendix A conformance checklist |
+| Quickly judge whether this protocol is worth using | README (this page) → report Part B → SPEC §6 |
+| Check whether a given conclusion holds up | Follow the `[0x]` numbering into `research/`; every file has `path` + `symbol`-level citations |
+| Understand why some feature is "not done" | Report Part C4 / D7, plus SPEC §1.2 non-goals and §12 extension mechanism |
 
-## 方法论
+### Language note
 
-本报告以**源码与真实协议实现**为主要依据，每条关键结论都带文件路径 + 符号名级引用；产品文档仅作补充并标注。调查对象：
+The research report and the evidence files under research/ are written in Chinese. The normative specification is SPEC.md, which is in English.
 
-DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlogic/pi-mono) · ACP (Agent Client Protocol) · Codex App Server · Claude Code（经 `sdk.d.ts`，CLI 闭源）· Gemini CLI
+## Methodology
 
-已知限制（如 ZCode 协议自述"未冻结"、Claude CLI 未做二进制审计等）如实记录在报告末尾。
+This report is based primarily on **source code and real protocol implementations**; every key conclusion carries a file-path + symbol-name-level citation. Product documentation is used only as a supplement and is marked as such. Surveyed subjects:
 
-## 现状与路线
+DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlogic/pi-mono) · ACP (Agent Client Protocol) · Codex App Server · Claude Code (via `sdk.d.ts`; the CLI is closed-source) · Gemini CLI
 
-**ARI 1.0 已完成**——[SPEC.md](SPEC.md)：握手与版本协商、会话生命周期（new / resume / prompt / cancel / fork / list / shutdown）、turn 结算不变量、21 种事件、人机交互、完整错误码表（`-32001`…`-32008`）、扩展机制、安全考虑、一致性清单。
+Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no binary audit of the Claude CLI, etc.) are recorded faithfully at the end of the report.
 
-**下一步（本仓库内）**——一个参考 Shell + 各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP）。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。
+## Status and roadmap
 
-**明确不做**——工具体标准化（交给 MCP）、client tools 反转（ACP v2 已删除该面）、PTC 事件、compaction 控制、PTY 透传、子 agent 编排 API、后台任务控制 API。这些走 §12 的 `x-` 扩展机制，**不占版本号**。
+**ARI 1.0 is complete** — [SPEC.md](SPEC.md): handshake and version negotiation, session lifecycle (new / resume / prompt / cancel / fork / list / shutdown), turn settlement invariants, 21 event kinds, human interaction, the full error-code table (`-32001`…`-32008`), extension mechanism, security considerations, conformance checklist.
 
-**尚无参考实现。** 报告 D8 论证了一个 ~200 行、无账本/无 compaction/无 subagent 的 SimpleAgent 也能合规，但这份论证尚未被代码验证。
+**Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention.
 
-## 参与贡献
+**Next (in this repository)** — a mock harness, the conformance suite (Appendix A), a reference shell, and adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP). The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI.
 
-Issue 与 PR 都欢迎。最有价值的贡献是**反例**：如果你知道某个 runtime 的行为与 Part B 的"共同抽象"矛盾，或者 Part D 的某条规范在你的实现里无法落地，请开 issue 并附源码引用。
+**Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
-## 许可
+**Not yet validated end-to-end.** Report D8 argues that a ~200-line SimpleAgent with no ledger, no compaction, and no subagent can still be conformant. That claim is still unproven: the mock harness and the conformance suite that would test it have not landed yet.
 
-[Apache-2.0](LICENSE)。提交贡献即表示同意按同一许可授权（Apache-2.0 §5）。
+## Contributing
+
+Issues and PRs are welcome. The most valuable contribution is a **counterexample**: if you know of a runtime whose behavior contradicts the "shared abstractions" in Part B, or if some clause in Part D cannot be implemented in your runtime, please open an issue with source citations.
+
+## License
+
+[Apache-2.0](LICENSE). By submitting a contribution you agree to license it under the same license (Apache-2.0 §5).
 
 ---
 
-## English abstract
+## Summary
 
 **ARI (Agent Runtime Interface)** is a minimal, source-evidence-driven runtime specification for coding-agent harnesses.
 
@@ -89,4 +99,4 @@ ARI 1.0 is **10 request methods + 21 events + 1 handshake**, carried as newline-
 
 Every capability flag in `initialize` gates a defined surface — no dangling capabilities. ARI uses client→server requests and server→client notifications only, never server→client requests.
 
-Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). A reference shell and per-SDK adapters are next; no reference implementation exists yet.
+Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library exists; the mock harness, conformance suite, reference shell, and per-SDK adapters are next.

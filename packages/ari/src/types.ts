@@ -1,13 +1,13 @@
 /**
- * ARI 1.0 协议类型 —— SPEC.md §2 / §5.3 / §7 / §9 / §10。
+ * ARI 1.0 protocol types — SPEC.md §2 / §5.3 / §7 / §9 / §10.
  *
- * 事件在线上是**扁平**的：信封 { sessionId, seq, type, ...payload }，
- * 因此联合类型的每个成员直接带 payload 字段（不嵌套）。
+ * Events are **flat** on the wire: the envelope is { sessionId, seq, type, ...payload },
+ * so each member of the union type carries its payload fields directly (no nesting).
  */
 
 export const PROTOCOL_VERSION = 1;
 
-// ── 枚举值（用 const 对象而非 enum，保持语法可擦除） ──────────────────
+// ── Enum values (const objects rather than enum, to keep syntax erasable) ──────────────────
 
 export type SessionStatus = "running" | "idle";
 export type StopReason = "end_turn" | "max_tokens" | "cancelled" | "refusal" | "error";
@@ -21,17 +21,17 @@ export type CompactionTrigger = "manual" | "auto" | "overflow";
 export type SubagentResultStatus = "success" | "error" | "cancelled";
 export type BackgroundRunStatus = "running" | "pending";
 
-// ── 内容块 ────────────────────────────────────────────────────────────
+// ── Content blocks ────────────────────────────────────────────────────────────
 
 export interface TextContentBlock {
   type: "text";
   text: string;
 }
 
-/** ARI 1.0 只定义 text；其他类型由扩展机制引入（SPEC §12）。 */
+/** ARI 1.0 defines only text; other types are introduced by the extension mechanism (SPEC §12). */
 export type ContentBlock = TextContentBlock;
 
-// ── 能力（SPEC §5.3） ─────────────────────────────────────────────────
+// ── Capabilities (SPEC §5.3) ─────────────────────────────────────────────────
 
 export interface AgentCapabilities {
   reasoning: boolean;
@@ -92,7 +92,7 @@ export const ALL_CAPABILITIES: AgentCapabilities = {
 };
 
 export interface ClientCapabilities {
-  /** Shell 是否会在断线后调用 session/resume。 */
+  /** Whether the shell will call session/resume after a disconnect. */
   replay?: boolean;
 }
 
@@ -101,7 +101,7 @@ export interface PeerInfo {
   version: string;
 }
 
-// ── 方法参数与结果 ────────────────────────────────────────────────────
+// ── Method params and results ────────────────────────────────────────────────────
 
 export interface InitializeParams {
   protocolVersion: number;
@@ -122,13 +122,13 @@ export interface SessionNewParams {
 
 export interface SessionNewResult {
   sessionId: string;
-  /** 下一条事件将使用的 seq；新会话为 1。 */
+  /** The seq the next event will use; 1 for a new session. */
   nextSeq: number;
 }
 
 export interface SessionResumeParams {
   sessionId: string;
-  /** 省略 = 从头重放。 */
+  /** Omitted = replay from the beginning. */
   since?: number;
 }
 
@@ -146,7 +146,7 @@ export interface SessionPromptParams {
 }
 
 export interface SessionPromptResult {
-  /** durable 入队回执；≠ turn 结局（SPEC §7.3）。 */
+  /** Durable enqueue receipt; ≠ turn outcome (SPEC §7.3). */
   messageId: string;
 }
 
@@ -162,7 +162,7 @@ export interface SessionCancelResult {
 
 export interface SessionForkParams {
   sessionId: string;
-  /** 省略 = 当前 turn 边界。 */
+  /** Omitted = the current turn boundary. */
   atTurn?: number;
 }
 
@@ -192,7 +192,7 @@ export interface ApprovalRespondParams {
   sessionId: string;
   approvalId: string;
   decision: ApprovalDecision;
-  /** 仅当 agentCapabilities.approvalEditInput 为 true。 */
+  /** Only when agentCapabilities.approvalEditInput is true. */
   amendedInput?: unknown;
 }
 
@@ -204,14 +204,14 @@ export interface QuestionAnswer {
 export interface QuestionRespondParams {
   sessionId: string;
   questionId: string;
-  /** `[]` = 显式整体放弃作答（SPEC §10.2）。 */
+  /** `[]` = explicitly decline to answer as a whole (SPEC §10.2). */
   answers: QuestionAnswer[];
 }
 
 export type ShutdownParams = Record<string, never>;
 export type EmptyResult = Record<string, never>;
 
-// ── snapshot（SPEC §7.2） ─────────────────────────────────────────────
+// ── snapshot (SPEC §7.2) ─────────────────────────────────────────────
 
 export interface UsageInfo {
   inputTokens: number;
@@ -274,15 +274,15 @@ export interface SessionSnapshot {
   usage?: UsageInfo;
 }
 
-// ── 事件（SPEC §9.2 / §9.3） ──────────────────────────────────────────
+// ── Events (SPEC §9.2 / §9.3) ──────────────────────────────────────────
 
-/** 所有事件共有的信封字段。 */
+/** Envelope fields common to all events. */
 export interface EventEnvelope {
   sessionId: string;
   seq: number;
 }
 
-/** 必需事件（10）。 */
+/** Required events (10). */
 export type RequiredEvent =
   | (EventEnvelope & { type: "session/status"; status: SessionStatus })
   | (EventEnvelope & { type: "turn/started"; turn: number; messageIds: string[] })
@@ -302,7 +302,7 @@ export type RequiredEvent =
   | (EventEnvelope & { type: "approval/resolved"; approvalId: string; decision: ApprovalResolution })
   | (EventEnvelope & { type: "session/error"; error: AriEventError; turn?: number });
 
-/** 能力门控事件（11）。 */
+/** Capability-gated events (11). */
 export type CapabilityEvent =
   | (EventEnvelope & { type: "reasoning/delta"; turn?: number; text: string })
   | (EventEnvelope & { type: "question/requested"; questionId: string; questions: QuestionSpec[] })
@@ -326,7 +326,7 @@ export interface AriEventError {
   retryable?: boolean;
 }
 
-/** 事件类型 → 其所需能力（必需事件不出现在此表中）。 */
+/** Event type → its required capability (required events do not appear in this table). */
 export const EVENT_CAPABILITY: Partial<Record<AriEventType, CapabilityKey>> = {
   "reasoning/delta": "reasoning",
   "question/requested": "question",
@@ -354,14 +354,14 @@ export const REQUIRED_EVENT_TYPES = [
   "session/error",
 ] as const;
 
-/** 方法名 → 其所需能力（无门控的方法不出现）。 */
+/** Method name → its required capability (methods without gating do not appear). */
 export const METHOD_CAPABILITY: Record<string, CapabilityKey> = {
   "session/fork": "fork",
   "session/list": "sessionList",
   "question/respond": "question",
 };
 
-// ── 方法表（供类型化调用） ────────────────────────────────────────────
+// ── Method table (for typed calls) ────────────────────────────────────────────
 
 export interface AriMethods {
   initialize: { params: InitializeParams; result: InitializeResult };

@@ -1,10 +1,10 @@
 /**
- * NDJSON 分帧 —— SPEC.md §4.1–§4.3。
+ * NDJSON framing — SPEC.md §4.1–§4.3.
  *
- * 规则：
- *  - 每行一条完整 JSON，以单个 \n 结束；JSON 内禁止嵌入换行。
- *  - 单行 ≤ 1 MiB（1,048,576 字节，UTF-8，不含换行）。
- *  - 写入侧必须施加背压（阻塞写），禁止无界缓冲。
+ * Rules:
+ *  - One complete JSON value per line, terminated by a single \n; embedded newlines are forbidden inside JSON.
+ *  - A single line is ≤ 1 MiB (1,048,576 bytes, UTF-8, excluding the newline).
+ *  - The write side must apply backpressure (blocking writes); unbounded buffering is forbidden.
  */
 
 import type { Writable } from "node:stream";
@@ -22,8 +22,8 @@ export class FrameTooLargeError extends Error {
 }
 
 /**
- * 把一个消息编码为一行 NDJSON（含结尾换行）。
- * 超过帧上限时抛 FrameTooLargeError —— 调用方必须在**事件层**拆分（SPEC §4.2）。
+ * Encode a message as one line of NDJSON (including the trailing newline).
+ * Throws FrameTooLargeError when the frame limit is exceeded — the caller must split at the **event layer** (SPEC §4.2).
  */
 export function encodeFrame(message: unknown): string {
   const line = JSON.stringify(message);
@@ -33,11 +33,11 @@ export function encodeFrame(message: unknown): string {
 }
 
 /**
- * 从字节/字符串流中切出 NDJSON 帧并解析为 JSON 值。
+ * Cut NDJSON frames out of a byte/string stream and parse them into JSON values.
  *
- * - 空行被忽略。
- * - 单帧超限抛 FrameTooLargeError（包含尚未收到换行的累积缓冲）。
- * - JSON 解析失败由调用方处理（对应 -32700）。
+ * - Empty lines are ignored.
+ * - A frame over the limit throws FrameTooLargeError (including the accumulated buffer when no newline has been received yet).
+ * - JSON parse failures are handled by the caller (corresponding to -32700).
  */
 export async function* readFrames(
   source: AsyncIterable<Uint8Array | string>,
@@ -74,9 +74,9 @@ export async function* readFrames(
 }
 
 /**
- * 创建一个带背压的帧写入器。
+ * Create a frame writer with backpressure.
  *
- * 返回值在底层缓冲写满时等待 `drain`，因此不会无界堆积（SPEC §4.3）。
+ * The returned function waits for `drain` when the underlying buffer is full, so it never piles up without bound (SPEC §4.3).
  */
 export function createFrameWriter(
   target: Writable,

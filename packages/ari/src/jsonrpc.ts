@@ -1,8 +1,8 @@
 /**
- * JSON-RPC 2.0 消息类型与判定 —— SPEC.md §4.1。
+ * JSON-RPC 2.0 message types and predicates — SPEC.md §4.1.
  *
- * ARI 只使用两种消息：client→server 请求、server→client 通知。
- * 不使用 server→client 请求（SPEC §3）。
+ * ARI uses only two kinds of messages: client→server requests and server→client notifications.
+ * It does not use server→client requests (SPEC §3).
  */
 
 import type { AriEventError } from "./types.ts";
@@ -73,7 +73,7 @@ export function isJsonRpcFailure(value: JsonRpcResponse): value is JsonRpcFailur
   return "error" in value;
 }
 
-/** `event` 通知的 params（SPEC §9.1）。 */
+/** params of the `event` notification (SPEC §9.1). */
 export interface EventNotificationParams {
   sessionId: string;
   seq: number;
@@ -94,7 +94,7 @@ export function isEventNotification(
   );
 }
 
-/** 从事件 payload 中取出 error 字段（仅 session/error 有意义）。 */
+/** Extract the error field from an event payload (meaningful only for session/error). */
 export function readEventError(params: EventNotificationParams): AriEventError | undefined {
   const err = params["error"];
   if (!isObject(err) || typeof err["code"] !== "number" || typeof err["message"] !== "string") {
