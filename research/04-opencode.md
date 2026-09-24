@@ -1,6 +1,6 @@
-# OpenCode 源码级研究报告 — Agent Runtime Protocol (ARI) 设计参考
+# OpenCode 源码级研究报告 — ARI 设计参考
 
-- 对象: OpenCode v1.18.32 (origin: github.com/anomalyco/opencode, fork of sst/opencode; 本地 repo `<local checkout>`)
+- 对象: OpenCode v1.18.32 (origin: github.com/anomalyco/opencode, fork of sst/opencode; 本地 repo `opencode/`，未入库)
 - 方法: 全部基于本地源码阅读 (grep/glob/read), 未经标注即为【source】; 引用格式 `文件路径 + 符号名`。
 - 重要总览: v1.18.32 的 OpenCode 已不是早期 "JSON 文件存储 + Hono server + Bus 事件" 的单一 package 形态, 而是一个 monorepo:
   - `packages/schema` — 浏览器安全的 wire/storage 契约 (Effect Schema), 事件清单 `EventManifest`;

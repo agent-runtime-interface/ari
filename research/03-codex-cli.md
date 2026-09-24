@@ -1,7 +1,7 @@
 # Codex CLI (codex-rs) Runtime/Protocol 内部深度调研 — ARI 设计参考
 
 > 调研对象:OpenAI Codex CLI 的 Rust 实现(codex-rs),聚焦 CLI 自身的 runtime/loop/protocol 内部。
-> 仓库:<local checkout>(HEAD `44b857c00e`,2026-09-22)。不含 app-server protocol(另行交叉引用)。
+> 仓库:`codex/`(本地 clone，未入库;HEAD `44b857c00e`,2026-09-22)。不含 app-server protocol(另行交叉引用)。
 > 【source】= 源码证据(路径 + 符号);【docs】= 仓库文档。所有行号基于该 HEAD,可能与发布版有偏移。
 
 ## 0. 总览:crate 地图与三条"协议线"

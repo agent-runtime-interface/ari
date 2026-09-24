@@ -1,6 +1,6 @@
 # ACP（Agent Client Protocol）源码研究报告 —— ARI 设计先例分析
 
-> 研究对象：Zed Industries 的 Agent Client Protocol（ACP）。本地仓库 `/tmp/ari-research/agent-client-protocol`（commit `e3bdb6d`，main 分支）；官方文档 https://agentclientprotocol.com/；TS/Rust 运行时 SDK 位于独立仓库（github.com/agentclientprotocol/typescript-sdk、rust-sdk），通过 web_fetch 核实关键源码。
+> 研究对象：Zed Industries 的 Agent Client Protocol（ACP）。本地仓库（未入库；commit `e3bdb6d`，main 分支）；官方文档 https://agentclientprotocol.com/；TS/Rust 运行时 SDK 位于独立仓库（github.com/agentclientprotocol/typescript-sdk、rust-sdk），通过 web_fetch 核实关键源码。
 >
 > **语料说明**：任务书假设本地仓库含 `ts/` 包与 `schema/schema.json`、`schema.md`、`docs/`、rust crates。实际仓库结构已重构：本地仅含 `agent-client-protocol-schema/`（Rust 数据模型 crate，含 v1/v2 模块）、`schema/v1|v2/`（生成的 JSON Schema 与 `meta.json`）、`schema-generator/`、`docs/`（Mintlify 文档源）与 `CHANGELOG.md`。本地 `ts/` 目录：源码/文档中未找到。TS SDK 传输层与 Rust 运行时 crate 的结论均来自对应独立仓库的 raw 源码（URL 见正文），非本地文件。
 

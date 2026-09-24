@@ -1,6 +1,6 @@
-# ARI — Agent Runtime Protocol
+# ARI
 
-> 面向 Coding Agent Harness 的**运行时协议**提案。
+> 面向 Coding Agent Harness 的**运行时协议**提案。ARI 是项目名，不是首字母缩写。
 > 状态：**v0.1 提案，未冻结** · 许可：Apache-2.0
 
 一个 Shell（IDE 插件、TUI、Web UI、自动化脚本）想要驱动不同的 Coding Agent runtime，今天必须为每一家写一套适配器：DSH 有 SDK JSON-RPC，Codex 有 app-server，ZCode 有 Protocol V4，OpenCode 是 HTTP+SSE，Pi 是 RPC——方法名、事件名、完成语义、审批形状各不相同。
@@ -79,7 +79,7 @@ Issue 与 PR 都欢迎。最有价值的贡献是**反例**：如果你知道某
 
 ## English abstract
 
-**ARI (Agent Runtime Protocol)** is a minimal, source-evidence-driven runtime protocol for coding-agent harnesses.
+**ARI** is a minimal, source-evidence-driven runtime protocol for coding-agent harnesses. (The name is not an acronym.)
 
 A shell that wants to drive different agent runtimes today needs a bespoke adapter per runtime. ARI argues that these runtimes already share the same runtime abstractions — session as append-only event ledger, turn/step, tool-call lifecycle, closed-form approvals vs. open questions, explicit cancellation, usage, compaction events — and that these are worth standardizing once.
 

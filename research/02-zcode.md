@@ -1,6 +1,6 @@
 # ZCode (zai-org/ZCode) 源码研究报告 — ARI 协议设计研究
 
-> 仓库: `<local checkout>`（本地 clone，package.json version 3.14.0，Apache-2.0，TypeScript pnpm monorepo）
+> 仓库: `ZCode/`（本地 clone，未入库；package.json version 3.14.0，Apache-2.0，TypeScript pnpm monorepo）
 > 方法: 源码定点阅读（grep + 分段 read）。所有 claim 给出 path + symbol；未找到写「源码中未找到」。
 
 ## 1. 架构总览

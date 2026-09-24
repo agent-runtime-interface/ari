@@ -1,7 +1,7 @@
 # Codex App Server 源码研究报告(openai/codex,crate: codex-rs/app-server)
 
 > 研究对象:`codex-rs/app-server`(JSON-RPC server)+ `codex-rs/app-server-protocol`(协议定义)。
-> 本地仓库:`<local checkout>`。所有结论均给出 源码路径 + symbol 证据。
+> 本地仓库:`codex/`（未入库）。所有结论均给出 源码路径 + symbol 证据。
 
 ## 1. Transport & framing(JSON-RPC over stdio?)
 
