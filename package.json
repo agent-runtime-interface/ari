@@ -1,0 +1,22 @@
+{
+  "name": "ari",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ARI — a runtime protocol for coding-agent harnesses. Spec + reference implementation.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "mock": "node packages/mock-harness/src/main.ts",
+    "shell": "node packages/shell/src/main.ts",
+    "conformance": "node packages/conformance/src/main.ts",
+    "test": "node packages/conformance/src/main.ts --harness \"node packages/mock-harness/src/main.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}

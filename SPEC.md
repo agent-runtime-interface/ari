@@ -1,6 +1,6 @@
 # ARI 1.0 Specification
 
-> ARI 是项目名，不是首字母缩写。本文件是 ARI 的**规范性规范**。
+> ARI = **Agent Runtime Interface**。本文件是 ARI 的**规范性规范**。
 > 调研依据与取舍论证见 [ARI-RESEARCH-REPORT.md](ARI-RESEARCH-REPORT.md) 与 [research/](research/)。
 
 ---
@@ -24,6 +24,8 @@
 ## 1. 范围与非目标
 
 ### 1.1 范围
+
+ARI 是一份**接口规范**：它规定 Shell 与 Harness 之间的契约，而协议绑定（如 JSON-RPC/NDJSON，§4）规定该契约如何传输。
 
 ARI 规定 **Shell 与 Harness 之间的运行时契约**：会话生命周期、事件流、turn 结算、工具调用生命周期、人机交互、取消、用量与压缩通知、错误语义、能力协商。
 

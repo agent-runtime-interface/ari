@@ -1,0 +1,11 @@
+{
+  "name": "@ari/protocol",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ARI 1.0 protocol types, Shell-side client, and Harness-side helper.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

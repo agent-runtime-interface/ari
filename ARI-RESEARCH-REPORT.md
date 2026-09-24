@@ -1,6 +1,6 @@
 # ARI 前期技术调研报告
 
-> ARI 是项目名，不是首字母缩写——一套面向 Coding Agent Harness 的运行时协议。
+> ARI = **Agent Runtime Interface**——一套面向 Coding Agent Harness 的运行时契约。
 > 方法：以**源码与真实协议实现**为主要依据（每条关键结论都有 `path` + `symbol` 级引用，见 `research/01…08`），产品文档仅作补充并标注。
 > 本报告回答一个问题：现有主流 Coding Agent 的 Harness 之间，哪些是**真正共同的运行时抽象**，ARI 应该标准化什么、不该碰什么。
 
