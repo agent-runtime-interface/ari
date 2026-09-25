@@ -1,7 +1,7 @@
 # ARI 交接文档 — DSH 适配层已完成
 
 > 面向**下一位接手的 AI Agent**。你无法访问之前的会话，只有这份文档和它引用的上一份。
-> 生成时间：2026-09-25 00:45 · 工作目录：仓库根目录
+> 生成时间：2026-09-25 00:45 · 工作目录：仓库根目录（AGENTS.md 约定：交接文档不写本机绝对路径）
 > **前置阅读**：[handoff-260924-2311-ari-adapters-next.md](handoff-260924-2311-ari-adapters-next.md)——本文件只记录**增量**，所有背景、硬约束、命名决定、踩坑清单以那份为准。
 
 ---
@@ -72,7 +72,7 @@ packages/adapter-dsh/
 ## 6. 基线自检（动手前先跑）
 
 ```bash
-cd <仓库根目录>
+cd <仓库根目录>   # 即 AGENTS.md / SPEC.md 所在目录
 npm test                    # 期望 78/78 绿
 npm run conformance         # 对 mock harness：23 passed / 0 failed / 1 skipped
 npm run conformance:dsh     # 对 DSH 适配层：18 passed / 0 failed / 6 skipped
