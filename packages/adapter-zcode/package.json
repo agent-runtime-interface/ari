@@ -1,0 +1,14 @@
+{
+  "name": "@ari/adapter-zcode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ARI 1.0 adapter for ZCode (zai-org/ZCode): translates ARI to the ZCode Protocol V4 wire (RPC + conversation topics) and back.",
+  "license": "Apache-2.0",
+  "bin": {
+    "ari-adapter-zcode": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  }
+}

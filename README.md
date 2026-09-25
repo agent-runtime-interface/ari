@@ -65,13 +65,24 @@ packages/adapter-codex/   the second adapter: ARI ⇄ Codex app-server (the v2 t
   test/fake-codex.ts      a Codex-wire test double (notification-before-response ordering,
                           blocking approval/user-input requests), no API key needed
   test/adapter.test.ts    31 end-to-end tests across real processes
+packages/adapter-zcode/   the third adapter: ARI ⇄ ZCode (zai-org/ZCode, Protocol V4:
+                          v4/command RPC + conversation topic frames of Row/Delta/StatePatch)
+  src/translate.ts        the pure ZCode→ARI vocabulary mapping (turn brackets are row
+                          states; interactions are data in pendingInteractions, not callbacks)
+  src/adapter.ts          the translator core: snapshot-history vs live-delta handling,
+                          the notification gate, the pending-input queue, resolveInteraction
+                          answering, fork through the stable row target, the replay ledger
+  src/zcode.ts            the ZCode-side client (v4 RPC, wire-frame fragment reassembly)
+  test/fake-zcode.ts      a ZCode-wire test double (projection frames, fragmented physical
+                          frames, pendingInteraction data flow), no install needed
+  test/adapter.test.ts    31 end-to-end tests across real processes
 LICENSE                   Apache-2.0
 ```
 
 ## Running it
 
 ```bash
-npm test        # 109 tests: invariants, conformance teeth, Shell-side checks, both adapters
+npm test        # 140 tests: invariants, conformance teeth, Shell-side checks, all three adapters
 npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
 
 # Drive any harness with the reference shell:
@@ -85,6 +96,9 @@ node packages/shell/src/main.ts -- node packages/adapter-dsh/src/main.ts --dsh d
 
 # Drive the Codex app-server the same way:
 node packages/shell/src/main.ts -- node packages/adapter-codex/src/main.ts --codex codex app-server
+
+# Drive the ZCode Agent CLI the same way:
+node packages/shell/src/main.ts -- node packages/adapter-zcode/src/main.ts --zcode zcode app-server --stdio
 ```
 
 ### The shell
@@ -167,6 +181,18 @@ npm run conformance:codex
 # 24 passed, 0 failed, 0 skipped
 ```
 
+The ZCode adapter reaches the same bar on a wire where interaction is *data*
+instead of reverse requests: approvals and questions surface through the
+`pendingInteractions` projection and are answered with the `resolveInteraction`
+command, `forkAssistant` (stable row target + revision CAS) backs
+`session/fork`, and the adapter keeps a replay ledger — so every probe is
+supplied and nothing skips:
+
+```bash
+npm run conformance:zcode
+# 24 passed, 0 failed, 0 skipped
+```
+
 ## How to read
 
 | Your goal | Suggested path |
@@ -194,9 +220,11 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **Second adapter — done.** `packages/adapter-codex/` drives the Codex app-server over its v2 `thread.*` wire — the biggest envelope gap in the family, since every notification carries three-level coordinates (`thread_id`/`turn_id`/`item_id`). The coordinates collapse into ARI's envelope: thread ids *are* ARI session ids, adapter-assigned turns map the `turn_id` space, and `item_id` rides ARI's opaque `callId`. The wire's server→client requests (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/tool/requestUserInput`) become ARI `approval/*` and `question/*` events answered through the respond methods — the one-way interaction pattern holding against a bidirectional wire. Cancellation is `turn/interrupt` (the runtime survives, unlike DSH), `turn/start`'s steering behavior is deliberately not exposed (mid-turn prompts queue, SPEC §7.3), `thread/fork`/`thread/list` back `session/fork`/`session/list`, and `session/resume` is served from the adapter's per-session event ledger. The conformance suite passes **24/24 with zero skips** — the first target against which every probe could be supplied. The documented limits are the wire's own: no `refusal`/`max_tokens` stop reasons exist upstream, approval decisions are closed-enum (no input amending), and child-agent threads are surfaced as events, not attachable sessions.
 
-**Real-runtime smoke tests — run (2026-09-25).** Both adapters have now driven their real runtimes through the shell, not only the in-repo wire doubles. The Codex smoke passed end-to-end against a real app-server: handshake, capability declaration, and a real answered prompt — plus two paths the fake cannot reproduce: the server's own retryable `error` notifications ("Reconnecting... N/5") surfaced as ARI `session/error{retryable:true}` while the turn stayed open (SPEC §8-I4), and notifications unknown to the adapter (`thread/started`, `account/*`) were tolerated without breaking the stream. The DSH smoke ran a real `dsh --profile sdk` runtime through handshake, capability declaration, and the error path; it stops only at the machine credential — with no DeepSeek API key configured, the runtime settles the turn as an error (`MISSING_CREDENTIAL`), which the shell rendered correctly. Completing that final model call is the same one command on a machine with the key.
+**Third adapter — done.** `packages/adapter-zcode/` drives the ZCode Agent CLI (`zcode app-server --stdio`) over Protocol V4 — the wire where the event source is a *projection*, not a fact stream: the client subscribes to `conversation/<sessionId>` and reduces snapshot/delta frames of rows (`turnHeader`, `assistantText`, `toolCall`, `subagent`, `timelineMarker`, …) and whole-key StatePatches. Turn brackets are row states (`running` → `completedSuccess`/`completedInterrupted`/`failed`), streaming is `row.delta` text appends (a settled row that never streamed is delivered whole), and approvals/questions are **data** — they surface through the `pendingInteractions` projection and are answered with the `resolveInteraction` command, the one-way interaction pattern holding against a state-based wire. `session/cancel` maps to the `stop` command, `session/fork` to `forkAssistant` (stable row target + `baseRevision`/`baseLogEpoch` CAS), and the adapter keeps a per-session replay ledger. The conformance suite passes **24/24 with zero skips**. The documented limits are the wire's own: no per-path file-change event stream (`fileChanges` false), `backgroundWorks` entries vanish on delivery without an ARI-mappable terminal status (`backgroundTasks` false), V4 lists sessions through a topic subscription rather than a query and the coexisting legacy `session/list` RPC is a deprecated namespace the adapter does not bridge (`sessionList` false), and `resolveInteraction` answers are decision-shaped (`approvalEditInput` false). The wire's extra hazards are handled structurally: physical frames fragment above the byte cap (reassembled by the client), a header coalesced straight to a terminal state still opens and closes exactly one turn, and a branch removed under a running turn converges its open brackets.
 
-**Next (in this repository)** — the remaining adapter layers (ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from. The Codex adapter's notification gate — a `turn/started` can race the `turn/start` response through the app-server's single outbound queue — held against the real server in the smoke test above.
+**Real-runtime smoke tests — run (2026-09-25).** All three adapters have now driven their real runtimes, not only the in-repo wire doubles. The Codex smoke passed end-to-end against a real app-server: handshake, capability declaration, and a real answered prompt — plus two paths the fake cannot reproduce: the server's own retryable `error` notifications ("Reconnecting... N/5") surfaced as ARI `session/error{retryable:true}` while the turn stayed open (SPEC §8-I4), and notifications unknown to the adapter (`thread/started`, `account/*`) were tolerated without breaking the stream. The ZCode smoke passed end-to-end against a real `zcode app-server --stdio` (the CLI bundled at the same vintage as the verified checkout): real reasoning and answer text streamed through the projection, real token counts arrived, the turn settled `end_turn` — and the live wire exposed two behaviors the fake could not have: session creation blocks on the legacy `session/requestRuntimePreferences` reverse request (now answered with the desktop host's own fallback values), and the projection coalescer can swallow every streaming delta, merging the answer into the settled row (now delivered as a remainder, once, even across the runtime's re-announced rows). The DSH smoke ran a real `dsh --profile sdk` runtime through handshake, capability declaration, and the error path; it stops only at the machine credential — with no DeepSeek API key configured, the runtime settles the turn as an error (`MISSING_CREDENTIAL`), which the shell rendered correctly. Completing that final model call is the same one command on a machine with the key.
+
+**Next (in this repository)** — the remaining adapter layers (OpenCode / Pi / ACP), so the shell can drive real runtimes. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from. The notification-gate pattern — an upstream emission can always race the request response through a single outbound queue — has now held against three different wire shapes (DSH notifications, Codex notifications, ZCode projection frames).
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
@@ -222,4 +250,4 @@ ARI 1.0 is **10 request methods + 21 events + 1 handshake**, carried as newline-
 
 Every capability flag in `initialize` gates a defined surface — no dangling capabilities. ARI uses client→server requests and server→client notifications only, never server→client requests.
 
-Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH and Codex adapters exist; the remaining per-SDK adapters are next.
+Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH, Codex, and ZCode adapters exist; the remaining per-SDK adapters are next.
