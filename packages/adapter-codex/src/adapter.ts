@@ -50,6 +50,12 @@
  *    session. `session/resume{since}` replays that cut (SPEC §7.2) with a
  *    derived snapshot — the same in-memory contract the reference mock
  *    harness offers. A `since` beyond the watermark is -32602 (SPEC §7.2).
+ *    The ledger lives exactly as long as the adapter process: after a
+ *    restart the Codex thread survives, but this process has no events for
+ *    it, so `session/resume` of a pre-restart session is -32001. The
+ *    supported continuity path is `session/list` adoption with a fresh seq
+ *    space; replay across restarts would need a documented -32004 or a
+ *    `thread/resume`-backed ledger rebuild, not a pretend continuity.
  *  - **Capability honesty.** The declared capability set (translate.ts) is
  *    exactly what the wire can deliver; the emit path additionally drops any
  *    gated event whose capability is `false` (SPEC §5.3).
