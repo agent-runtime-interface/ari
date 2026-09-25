@@ -1,259 +1,259 @@
-# ACP（Agent Client Protocol）源码研究报告 —— ARI 设计先例分析
+# 06 · ACP (Agent Client Protocol) source-level survey — ARI design precedent analysis
 
-> 研究对象：Zed Industries 的 Agent Client Protocol（ACP）。本地仓库（未入库；commit `e3bdb6d`，main 分支）；官方文档 https://agentclientprotocol.com/；TS/Rust 运行时 SDK 位于独立仓库（github.com/agentclientprotocol/typescript-sdk、rust-sdk），通过 web_fetch 核实关键源码。
+> Subject of study: Zed Industries' Agent Client Protocol (ACP). Local checkout (not committed; commit `e3bdb6d`, main branch); official docs at https://agentclientprotocol.com/; the TS/Rust runtime SDKs live in separate repositories (github.com/agentclientprotocol/typescript-sdk, rust-sdk), with key source verified via web_fetch.
 >
-> **语料说明**：任务书假设本地仓库含 `ts/` 包与 `schema/schema.json`、`schema.md`、`docs/`、rust crates。实际仓库结构已重构：本地仅含 `agent-client-protocol-schema/`（Rust 数据模型 crate，含 v1/v2 模块）、`schema/v1|v2/`（生成的 JSON Schema 与 `meta.json`）、`schema-generator/`、`docs/`（Mintlify 文档源）与 `CHANGELOG.md`。本地 `ts/` 目录：源码/文档中未找到。TS SDK 传输层与 Rust 运行时 crate 的结论均来自对应独立仓库的 raw 源码（URL 见正文），非本地文件。
+> **Corpus note**: the task brief assumed the local repository contained a `ts/` package plus `schema/schema.json`, `schema.md`, `docs/`, and Rust crates. The actual repository layout has been restructured: the local checkout contains only `agent-client-protocol-schema/` (the Rust data-model crate, with v1/v2 modules), `schema/v1|v2/` (generated JSON Schema and `meta.json`), `schema-generator/`, `docs/` (Mintlify doc sources), and `CHANGELOG.md`. A local `ts/` directory: not found anywhere in the sources/docs. The conclusions about the TS SDK transport layer and the Rust runtime crate come from the raw sources of the corresponding separate repositories (URLs given in the body), not from local files.
 
 ---
 
-## 1. ACP 是什么 / 不是什么
+## 1. What ACP is / is not
 
-**定义与双方。** ACP 自我定位为"标准化 *code editor*（代码编辑器）与 *coding agent*（编码 agent）之间通信的协议"（`README.md` 首段；`docs/get-started/introduction.mdx`）。两个角色：
+**Definition and the two parties.** ACP describes itself as "a protocol that standardizes communication between *code editors* and *coding agents*" (first paragraph of `README.md`; `docs/get-started/introduction.mdx`). The two roles:
 
-- **Client**：编辑器/IDE 或其他 UI，"管理环境、处理用户交互、控制资源访问"（`docs/protocol/v1/overview.mdx:114-116`）。
-- **Agent**："使用生成式 AI 自主修改代码的程序，通常作为 Client 的子进程运行"（`overview.mdx:43-45`）。
+- **Client**: the editor/IDE or other UI, which "manages the environment, handles user interactions, and controls resource access" (`docs/protocol/v1/overview.mdx:114-116`).
+- **Agent**: "a program that uses generative AI to autonomously modify code, typically run as a subprocess of the Client" (`overview.mdx:43-45`).
 
-**定位：编辑器 spawn 的 agent 后端进程。** `docs/get-started/architecture.mdx:16-18`："用户尝试连接 agent 时，编辑器按需启动 agent 子进程，全部通信走 stdin/stdout"。一条连接可承载多个并发 session（同文件："Each connection can support several concurrent sessions"）。本地 agent 走 JSON-RPC over stdio；远程 agent 走 HTTP/WebSocket（尚在推进，`introduction.mdx` Info 块）。
+**Positioning: an agent backend process spawned by the editor.** `docs/get-started/architecture.mdx:16-18`: "when the user tries to connect to an agent, the editor launches the agent subprocess on demand, and all communication goes over stdin/stdout". One connection can carry multiple concurrent sessions (same file: "Each connection can support several concurrent sessions"). Local agents use JSON-RPC over stdio; remote agents use HTTP/WebSocket (still in progress, `introduction.mdx` Info block).
 
-**设计哲学**（`architecture.mdx:8-14`）：① MCP-friendly——复用 MCP 的 `ContentBlock` 等 JSON 表示（`docs/protocol/v1/content.mdx:16-18` 明确 ContentBlock 与 MCP 相同，便于 MCP 工具输出免转换转发）；② UX-first——为 agent 编码 UX（diff 展示、权限弹窗、进度流）设计，"抽象不多也不少"；③ Trusted——信任模型是"编辑器信任模型"，用户在编辑器内控制工具调用，编辑器授予 agent 本地文件与 MCP 访问。
+**Design philosophy** (`architecture.mdx:8-14`): (1) MCP-friendly — reuses MCP's JSON representations such as `ContentBlock` (`docs/protocol/v1/content.mdx:16-18` states explicitly that ContentBlock is identical to MCP's, so MCP tool output can be forwarded without conversion); (2) UX-first — designed for the agent coding UX (diff display, permission prompts, progress streaming), "no more and no less abstraction"; (3) Trusted — the trust model is the "editor trust model": the user controls tool calls inside the editor, and the editor grants the agent local file and MCP access.
 
-**不是什么。** ACP 不定义 agent 内部：无模型 provider 选择协议面（模型/推理等级通过 session config options 的 `category: "model"` / `"thought_level"` 暴露，`docs/protocol/v1/session-config-options.mdx:202-209`；`providers/list|set|disable` 仅存在于 `#[cfg(feature = "unstable_llm_providers")]`，`agent-client-protocol-schema/src/v1/agent.rs:4758-4763`）；不做 prompt 编排、上下文管理；认证是"agent 自己的账号体系"（`authenticate`/`authMethods`，见 §3），协议不持有模型 API key——`docs/protocol/v1/elicitation.mdx:134-135` 明确禁止把 URL-mode elicitation 获得的 token 送回 ACP 通道或进入模型上下文。v1 也没有 agent 侧后台任务、子 agent、上下文压缩的稳定协议面（§9）。
-
----
-
-## 2. 传输与分帧
-
-**JSON-RPC 2.0 over stdio，newline-delimited（非 Content-Length）。** 规范层：
-
-- `docs/protocol/v1/overview.mdx:10`："The protocol follows the JSON-RPC 2.0 specification"；消息分 Methods（请求-响应）与 Notifications（单向）。
-- `docs/protocol/v1/transports.mdx:17-27`（stdio 传输全文要点）：client 将 agent 作为子进程启动；"Messages are delimited by newlines (`\n`), and **MUST NOT** contain embedded newlines"（:24）；agent **MUST NOT** 向 stdout 写任何非 ACP 消息（:26），stderr 可用于日志（:25）。**没有 Content-Length 头**——与 LSP 的 HTTP 式分帧截然不同，就是逐行 NDJSON。
-- `overview.mdx:225-227` 约定：JSON 对象键 `camelCase`、discriminator 字符串 `snake_case`、JSON-RPC 信封字段（`jsonrpc/id/method/params/result/error`）遵循 JSON-RPC 2.0。
-
-**TS 实现佐证**（github.com/agentclientprotocol/typescript-sdk，raw 文件）：
-- `src/line-buffer.ts`：`LineBuffer.push(chunk)` 按 `const newline = 0x0a` 增量切分行，跨 chunk 缓存不完整行——纯按字节 0x0a 分帧，无任何长度头。
-- `src/examples/client.ts`：`spawn(...)` 启动 agent 子进程，`const stream = acp.ndJsonStream(input, output)` 后 `acp.client(...).connectWith(stream, ...)`——官方示例即"子进程 + NDJSON 流"。
-
-**Rust 实现佐证**（github.com/agentclientprotocol/rust-sdk，raw 文件）：
-- `src/agent-client-protocol/src/stdio.rs`：`Stdio::connect_to` 用 `BufReader::new(stdin).lines()` 读、`crate::jsonrpc::write_line(&mut writer, line)` 写——行式收发。
-- `md/transport-architecture.md`：字节流 transport "Write newline-delimited JSON to stream"；协议层与分帧层以 `TransportFrame` 为界（一帧 = 一个 `RawJsonRpcMessage`、一个非空 `TransportBatch` 或保留原样的畸形输入）；in-process `Channel::duplex()` 跳过序列化。批量（JSON-RPC batch）在 SDK 层对 v1/v2 统一支持。
-
-**JSON-RPC 信封在数据模型中的位置**：`agent-client-protocol-schema/src/rpc.rs:50-57`（`Request{id, method, params}`）、`:116-121`（`Notification{method, params}`）、`:138-142`（`JsonRpcMessage{jsonrpc:"2.0", flattened}`）；`:336-396` 的 `notification_wire_format` 测试给出了确切 wire 形状。所有方法名常量集中在 `src/v1/agent.rs:4753-4789`（agent 侧）与 `src/v1/client.rs:2689-2707`（client 侧），汇总于 `schema/v1/meta.json`。注意：session 更新流的 wire 方法名是 **`session/update`**（`client.rs:2689`），文档亦然；`rpc.rs:360` 测试里出现的 `"sessionUpdate"` 只是测试自造方法名，不是 wire 名。
-
-**向后兼容规则**：
-- `protocolVersion` 是单个整数，仅代表 MAJOR 版本，"只在 breaking change 时递增"；client 报最新版本，agent 支持则原样返回、否则返回自己支持的最新版，client 不支持则应断开并告知用户（`docs/protocol/v1/initialization.mdx:84-98`）。
-- "引入新能力不是 breaking change"，未在 initialize 中出现的 capability 一律视为不支持（`initialization.mdx:100-106`）。同一 wire 版本内，可选消息/参数由 capability 决定（`README.md` Versioning 节：wire 兼容只看协商的 `protocolVersion`，与 crate/JSON Schema artifact 版本无关）。
-- 版本常量：`ProtocolVersion(u16)` 的 `V0`（pre-release）、`V1`（stable）、`V2`（draft，仅 `unstable_protocol_v2` feature 下可用），`agent-client-protocol-schema/src/version.rs:9-49`。
-- Rust 类型全部 `#[non_exhaustive]`、枚举带 `#[serde(other)]` 兜底（如 `ToolKind::Other`，`src/v1/tool_call.rs:493-495`）；扩展手段是 `_meta` 字段与 `_` 前缀自定义方法（`overview.mdx:229-237`）。v2 草案进一步把所有 enum/ tagged union 变成开放集合，`_` 前缀留给实现（`docs/protocol/v2/migration.mdx` "Extensibility and forward compatibility"）。
-
-**远程传输（进行中）**：v1 规范只有 stdio + "Streamable HTTP (draft proposal in progress)"（`transports.mdx:44-46`）；RFD `docs/rfds/streamable-http-websocket-transport.mdx` 提出长连 GET SSE 流（connection 级 + session 级）+ POST（202 Accepted，`initialize` 除外）+ 同端点 WebSocket 升级，MUST 二者都支持，要求 HTTP/2 与 cookie 支持。
+**What it is not.** ACP does not define agent internals: there is no protocol surface for model-provider selection (model/reasoning level are exposed via session config options with `category: "model"` / `"thought_level"`, `docs/protocol/v1/session-config-options.mdx:202-209`; `providers/list|set|disable` exist only under `#[cfg(feature = "unstable_llm_providers")]`, `agent-client-protocol-schema/src/v1/agent.rs:4758-4763`); it does no prompt orchestration or context management; authentication is "the agent's own account system" (`authenticate`/`authMethods`, see §3), and the protocol never holds model API keys — `docs/protocol/v1/elicitation.mdx:134-135` explicitly forbids sending a token obtained via URL-mode elicitation back through the ACP channel or into model context. v1 also has no stable protocol surface for agent-side background tasks, subagents, or context compaction (§9).
 
 ---
 
-## 3. 握手：initialize / authenticate
+## 2. Transport and framing
 
-`initialize`（Client→Agent 请求）携带 `protocolVersion` + `clientCapabilities` +（SHOULD）`clientInfo{name,title,version}`；响应携带协商后的 `protocolVersion` + `agentCapabilities` +（SHOULD）`agentInfo` + `authMethods[]`（`docs/protocol/v1/initialization.mdx:24-82`，JSON 示例即 wire 格式）。
+**JSON-RPC 2.0 over stdio, newline-delimited (not Content-Length).** At the spec layer:
 
-**clientCapabilities**（`initialization.mdx:114-182`）：
-- `auth.terminal: boolean`——client 能以交互终端复现 agent 登录命令，agent 才可广告 `type:"terminal"` 认证方法（:118-128；`docs/protocol/v1/authentication.mdx:92-128`，含 `ACP_INTERACTIVE_LOGIN=1` env 的示例）。
-- `fs.readTextFile` / `fs.writeTextFile`（:130-138）——对应 `fs/*` 方法可用性。
-- `terminal: boolean`——全部 `terminal/*` 方法可用（:144-153）。
-- `elicitation: {form:{}, url:{}}`——支持哪些 elicitation 模式；ACP 特意与 MCP 不同，`{}` 不代表支持 form（:155-167；`docs/protocol/v1/elicitation.mdx:40-52`）。
-- `session.configOptions.boolean`——支持 boolean 型 config option（:169-182）。
+- `docs/protocol/v1/overview.mdx:10`: "The protocol follows the JSON-RPC 2.0 specification"; messages split into Methods (request-response) and Notifications (one-way).
+- `docs/protocol/v1/transports.mdx:17-27` (key points of the stdio transport section): the client launches the agent as a subprocess; "Messages are delimited by newlines (`\n`), and **MUST NOT** contain embedded newlines" (:24); the agent **MUST NOT** write anything that is not an ACP message to stdout (:26), while stderr may be used for logging (:25). **There is no Content-Length header** — a clean break from LSP's HTTP-style framing; it is simply line-by-line NDJSON.
+- `overview.mdx:225-227` conventions: JSON object keys are `camelCase`, discriminator strings are `snake_case`, and the JSON-RPC envelope fields (`jsonrpc/id/method/params/result/error`) follow JSON-RPC 2.0.
 
-**agentCapabilities**（`initialization.mdx:184-267`）：
-- `loadSession: boolean`——`session/load` 可用（:188-191；注意 :264-267 明确它游离于 `sessionCapabilities` 之外，未来会统一）。
-- `promptCapabilities: {image, audio, embeddedContext}`——`session/prompt` 可接受的内容类型；基线：所有 agent **MUST** 支持 `ContentBlock::Text` 与 `ResourceLink`（:202-218）。
-- `mcpCapabilities: {http, sse}`——agent 连接 MCP server 的传输能力，SSE 已被 MCP spec 弃用（:220-231）。
-- `auth.logout`——`logout` 方法可用（:233-241）。
-- `sessionCapabilities: {list:{}, delete:{}, resume:{}, close:{}, additionalDirectories:{}}`——各会话级扩展方法的 `{}` 对象型支持标记（:243-267）。
+**TS implementation evidence** (github.com/agentclientprotocol/typescript-sdk, raw files):
+- `src/line-buffer.ts`: `LineBuffer.push(chunk)` incrementally splits lines on `const newline = 0x0a`, buffering incomplete lines across chunks — framing is purely on byte 0x0a, with no length header of any kind.
+- `src/examples/client.ts`: `spawn(...)` starts the agent subprocess, then `const stream = acp.ndJsonStream(input, output)` followed by `acp.client(...).connectWith(stream, ...)` — the official example is exactly "subprocess + NDJSON stream".
 
-**authMethods / authenticate / logout**：agent 在 initialize 响应中广告 `authMethods[{id,name,description,type?}]`；`type` 缺省为 `"agent"`（走协议内 `authenticate{methodId}` 流程，`docs/protocol/v1/authentication.mdx:78-167`）；`type:"terminal"` 则 client 用同样的 agent 启动配置另起交互进程完成登录（exit 0 = 成功），**不得**对该方法发 `authenticate`（:169-188）。`logout`（agent 方法，需 `agentCapabilities.auth.logout`）终结已认证状态（:190-216）。Rust 侧 `AuthMethod` 等类型见 `src/v1/agent.rs:583-707`。
+**Rust implementation evidence** (github.com/agentclientprotocol/rust-sdk, raw files):
+- `src/agent-client-protocol/src/stdio.rs`: `Stdio::connect_to` reads with `BufReader::new(stdin).lines()` and writes with `crate::jsonrpc::write_line(&mut writer, line)` — line-based send/receive.
+- `md/transport-architecture.md`: the byte-stream transport "Write newline-delimited JSON to stream"; the protocol layer and framing layer meet at the `TransportFrame` boundary (one frame = one `RawJsonRpcMessage`, one non-empty `TransportBatch`, or malformed input preserved as-is); in-process `Channel::duplex()` skips serialization. Batching (JSON-RPC batch) is uniformly supported at the SDK layer for v1/v2.
 
----
+**Where the JSON-RPC envelope sits in the data model**: `agent-client-protocol-schema/src/rpc.rs:50-57` (`Request{id, method, params}`), `:116-121` (`Notification{method, params}`), `:138-142` (`JsonRpcMessage{jsonrpc:"2.0", flattened}`); the `notification_wire_format` test at `:336-396` gives the exact wire shape. All method-name constants are concentrated in `src/v1/agent.rs:4753-4789` (agent side) and `src/v1/client.rs:2689-2707` (client side), summarized in `schema/v1/meta.json`. Note: the wire method name of the session update stream is **`session/update`** (`client.rs:2689`), and the docs agree; the `"sessionUpdate"` seen in the `rpc.rs:360` test is just a test-invented method name, not a wire name.
 
-## 4. 会话生命周期
+**Backward-compatibility rules**:
+- `protocolVersion` is a single integer representing only the MAJOR version, "bumped only on breaking changes"; the client reports its latest version, the agent returns it verbatim if supported and otherwise returns the latest version it supports, and a client that does not support the result should disconnect and inform the user (`docs/protocol/v1/initialization.mdx:84-98`).
+- "Introducing new capabilities is not a breaking change"; any capability not advertised in initialize is treated as unsupported (`initialization.mdx:100-106`). Within one wire version, optional messages/parameters are gated by capabilities (`README.md` Versioning section: wire compatibility depends only on the negotiated `protocolVersion`, independent of crate/JSON Schema artifact versions).
+- Version constants: `ProtocolVersion(u16)` has `V0` (pre-release), `V1` (stable), `V2` (draft, available only under the `unstable_protocol_v2` feature), `agent-client-protocol-schema/src/version.rs:9-49`.
+- Rust types are all `#[non_exhaustive]`, with enums carrying a `#[serde(other)]` fallback (e.g. `ToolKind::Other`, `src/v1/tool_call.rs:493-495`); the extension mechanisms are the `_meta` field and `_`-prefixed custom methods (`overview.mdx:229-237`). The v2 draft goes further, turning all enums/tagged unions into open sets with the `_` prefix reserved for implementations (`docs/protocol/v2/migration.mdx` "Extensibility and forward compatibility").
 
-基线方法：所有 agent **MUST** 支持 `session/new`、`session/prompt`、`session/cancel`、`session/update`（`initialization.mdx:245`；Rust 注释同文，`src/v1/agent.rs:4026`）。
-
-- **session/new**：参数 `cwd`（绝对路径，MUST）+ `mcpServers[]`（stdio 配置 `{name,command,args,env}` 必须支持；`{type:"http",name,url,headers}` 与 `{type:"sse",...}` 分别需 `mcpCapabilities.http/sse`）；响应 `{sessionId}`，MAY 附带 `modes` / `configOptions`（`docs/protocol/v1/session-setup.mdx:45-81`；MCP 传输细节 :369-545）。`cwd` 规则：必须绝对路径、无视子进程实际启动位置、是相对路径解析基点、属于会话根集合（:358-367）。
-- **session/load**（需 `loadSession`）：传 `{sessionId, cwd, mcpServers}`，agent **MUST** 以 `session/update` 通知把整段会话历史重放给 client（含 `user_message_chunk`/`agent_message_chunk`，可带 `messageId`），全部重放完毕后才响应 `{}`（:83-188）。这是"状态在 agent、UI 重建靠事件重放"的典型设计。
-- **session/resume**（需 `sessionCapabilities.resume`）：同参数但 **MUST NOT** 重放历史，直接恢复上下文后响应；响应可附初始 mode/model/config 状态（:190-253）。RFD `session-resume.mdx`；v1 里 load/resume 是两个方法，v2 合并为 `session/resume` + `replayFrom` 游标（`docs/protocol/v2/migration.mdx` "session/load is gone"）。
-- **session/close**（需 `sessionCapabilities.close`）：取消该会话进行中的工作并释放资源（等价先 `session/cancel`）（:255-311）。
-- **session/list / session/delete**：发现已知会话（`cwd` 过滤 + cursor 分页，`SessionInfo{sessionId,cwd,title,updatedAt,additionalDirectories?,_meta}`）；`session_info_update` 通知可实时推送标题等元数据（`docs/protocol/v1/session-list.mdx:35-217`）；delete 从 list 结果中删除（`docs/protocol/v1/session-delete.mdx`；capability `sessionCapabilities.delete`）。
-- **additionalDirectories**：`session/new|load|resume` 可带额外工作根目录，扩大会话文件系统边界 `[cwd, ...additionalDirectories]`，均为绝对路径，resume 时需重发全量列表（`session-setup.mdx:313-344`）。
-- **session/prompt**：参数 `{sessionId, prompt: ContentBlock[]}`；内容类型受 promptCapabilities 约束（`docs/protocol/v1/prompt-turn.mdx:57-98`）。响应在 turn 结束时返回 `{stopReason}`，取值 `end_turn | max_tokens | max_turn_requests | refusal | cancelled`（:215-227, :292-311）。**v1 的响应即 turn 终点**——这是 v2 改造的核心（§9）。
-- **session/cancel**（通知）：client 可随时打断；client 应把未完成 tool call 标记为 cancelled、以 `cancelled` outcome 回应所有 pending 权限请求；agent 停止后 **MUST** 以 `stopReason:"cancelled"` 响应原 prompt（:312-345）。agent **MUST** 捕获底层 SDK 的 abort 异常并翻译成语义化的 cancelled（:334-341 Warning）。
-- **session/set_mode**：`{sessionId, modeId}` 切换模式（`docs/protocol/v1/session-modes.mdx:77-104`）。**没有** `session/set_model`；模型/思考等级选择走 config options（§8）。`providers/list|set|disable`（agent 方法）仅在 unstable feature 下。
+**Remote transport (in progress)**: the v1 spec has only stdio plus "Streamable HTTP (draft proposal in progress)" (`transports.mdx:44-46`); the RFD `docs/rfds/streamable-http-websocket-transport.mdx` proposes long-lived GET SSE streams (connection-level + session-level) + POST (202 Accepted, `initialize` excepted) + a WebSocket upgrade on the same endpoint, with a MUST that both be supported, plus HTTP/2 and cookie support requirements.
 
 ---
 
-## 5. 流式更新：`session/update` 全量变体
+## 3. Handshake: initialize / authenticate
 
-wire 格式：`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId", "update":{"sessionUpdate": <tag>, ...}}}`，tag 为 snake_case。Rust 权威枚举 `SessionUpdate`（`agent-client-protocol-schema/src/v1/client.rs:99-169`，`#[serde(tag="sessionUpdate", rename_all="snake_case")]`）：
+`initialize` (Client→Agent request) carries `protocolVersion` + `clientCapabilities` + (SHOULD) `clientInfo{name,title,version}`; the response carries the negotiated `protocolVersion` + `agentCapabilities` + (SHOULD) `agentInfo` + `authMethods[]` (`docs/protocol/v1/initialization.mdx:24-82`; the JSON example is the wire format).
 
-**v1 稳定变体**：
-1. `user_message_chunk`（`ContentChunk`）——用户消息流式块（重放时出现；live turn 中用户消息内嵌于 prompt 请求）。
-2. `agent_message_chunk`——agent 回复文本/富内容流（`docs/protocol/v1/prompt-turn.mdx:147-169`；`messageId` 可选：同 ID 属同一条消息，ID 变化即新消息）。
-3. `agent_thought_chunk`——agent 内部思考流（reasoning 事件）。
-4. `tool_call`——新建工具调用报告（见下）。
-5. `tool_call_update`——增量更新工具调用；除 `toolCallId` 外字段皆可选，只发改动的字段（`docs/protocol/v1/tool-calls.mdx:98-131`）。
-6. `plan`——任务计划全量替换：`entries[{content, priority: high|medium|low, status: pending|in_progress|completed}]`，"MUST 发送完整列表，Client 整体替换"（`docs/protocol/v1/agent-plan.mdx:44-83`）。
-7. `available_commands_update`——slash 命令广告：`availableCommands[{name, description, input:{hint}}]`，可随时推送；命令以普通 `/cmd args` 文本进入 prompt 执行（`docs/protocol/v1/slash-commands.mdx:8-96`）。
-8. `current_mode_update`——agent 侧模式变更 `{currentModeId}`（`session-modes.mdx:106-122`）。
-9. `config_option_update`——agent 推送全量 `configOptions`（`session-config-options.mdx:318-349`）。
-10. `session_info_update`——标题/时间戳/`_meta` 元数据（`session-list.mdx:177-217`）。
-11. `usage_update`——**用量上报已进入 v1 稳定面**：`{used, size, cost?: {amount, currency}}`，`used`/`size` 为当前上下文 token 数与窗口大小，`cost` 为 ISO 4217 累计费用（`prompt-turn.mdx:190-213`；`src/v1/client.rs:609-629` `UsageUpdate{used: u64, size: u64, cost}`）。发布于 `docs/announcements/session-usage-stabilized.mdx`（标注 2026-06-05）。
+**clientCapabilities** (`initialization.mdx:114-182`):
+- `auth.terminal: boolean` — only if the client can reproduce the agent's login command in an interactive terminal may the agent advertise a `type:"terminal"` auth method (:118-128; `docs/protocol/v1/authentication.mdx:92-128`, with an example using the `ACP_INTERACTIVE_LOGIN=1` env var).
+- `fs.readTextFile` / `fs.writeTextFile` (:130-138) — availability of the corresponding `fs/*` methods.
+- `terminal: boolean` — all `terminal/*` methods available (:144-153).
+- `elicitation: {form:{}, url:{}}` — which elicitation modes are supported; ACP deliberately differs from MCP here: `{}` does not mean form is supported (:155-167; `docs/protocol/v1/elicitation.mdx:40-52`).
+- `session.configOptions.boolean` — support for boolean config options (:169-182).
 
-**v1 unstable 变体**（`#[cfg(feature=...)]`，RFD 草案，默认关闭）：`plan_update` / `plan_removed`（`unstable_plan_operations`，`client.rs:113-126`）；`notice`（`unstable_session_notices`，非历史内 advisory，:139-148）；`compaction_update` / `compaction_summary_chunk`（`unstable_session_compaction`，上下文压缩实体 + 摘要流式追加，:149-168；设计见 `docs/rfds/session-compaction.mdx`，含 `compactionId` + `status: in_progress|completed`）。
+**agentCapabilities** (`initialization.mdx:184-267`):
+- `loadSession: boolean` — `session/load` is available (:188-191; note that :264-267 explicitly keeps it outside `sessionCapabilities`, to be unified in the future).
+- `promptCapabilities: {image, audio, embeddedContext}` — content types `session/prompt` can accept; baseline: every agent **MUST** support `ContentBlock::Text` and `ResourceLink` (:202-218).
+- `mcpCapabilities: {http, sse}` — transports the agent can use to connect to MCP servers; SSE is deprecated by the MCP spec (:220-231).
+- `auth.logout` — the `logout` method is available (:233-241).
+- `sessionCapabilities: {list:{}, delete:{}, resume:{}, close:{}, additionalDirectories:{}}` — `{}` object-style support markers for the session-level extension methods (:243-267).
 
-**tool_call 细节**（`docs/protocol/v1/tool-calls.mdx:14-96`；`src/v1/tool_call.rs`）：
-- 字段：`toolCallId`（必填）、`name`（可选程序化工具名，"不广告能力、不授予权限"）、`title`（人类可读，必填）、`kind`、`status`、`content[]`、`locations[]`、`rawInput`、`rawOutput`（任意 JSON 值；更新时缺省 = 保持原值）。
-- `ToolKind`（`tool_call.rs:473-496`）：`read | edit | delete | move | search | execute | think | fetch | switch_mode | other`（默认，`#[serde(other)]` 兜底）。
-- `ToolCallStatus`（`tool_call.rs:514-525`）：`pending`（输入流式中或等待批准）→ `in_progress` → `completed | failed`。
-- `ToolCallContent` 三种（`tool_call.rs:546-557`）：`content`（MCP 式内容块）、`diff`（`{path, oldText?, newText}` 单文件文本 diff，`:277-295`）、`terminal`（`{terminalId}` 引用 `terminal/create` 产物，client 持续展示 live 输出，`terminals.mdx:113-140`）。
-- `ToolCallLocation{path, line?}`：让 client 实现"跟随 agent"光标联动（`tool-calls.mdx:318-337`）。
+**authMethods / authenticate / logout**: the agent advertises `authMethods[{id,name,description,type?}]` in the initialize response; `type` defaults to `"agent"` when absent (using the in-protocol `authenticate{methodId}` flow, `docs/protocol/v1/authentication.mdx:78-167`); with `type:"terminal"` the client instead starts a separate interactive process with the same agent launch configuration to complete login (exit 0 = success), and **MUST NOT** send `authenticate` for that method (:169-188). `logout` (an agent method, requires `agentCapabilities.auth.logout`) terminates the authenticated state (:190-216). For the Rust-side `AuthMethod` and related types see `src/v1/agent.rs:583-707`.
 
 ---
 
-## 6. 客户端工具反转：client 是 fs/terminal 的工具提供方
+## 4. Session lifecycle
 
-ACP 最有意思的架构决定：**agent 侧工具执行可以反向调用 client**。连接是双向 JSON-RPC，client 同时也是 server。
+Baseline methods: every agent **MUST** support `session/new`, `session/prompt`, `session/cancel`, and `session/update` (`initialization.mdx:245`; the Rust comment says the same, `src/v1/agent.rs:4026`).
 
-- **fs/read_text_file**：agent→client 请求 `{sessionId, path, line?, limit?}`，返回 `{content}`；可读编辑器未保存状态（`docs/protocol/v1/file-system.mdx:31-75`）。行号 1-based；所有路径必须绝对（`overview.mdx:212-215`）。
-- **fs/write_text_file**：`{sessionId, path, content}`，client MUST 在文件不存在时创建（`file-system.mdx:77-117`）。
-- **terminal/create**：`{sessionId, command, args?, env?, cwd?, outputByteLimit?}`，client 立即返回 `{terminalId}`，命令后台运行（`docs/protocol/v1/terminals.mdx:28-111`）；`outputByteLimit` 超限时从头部截断且 MUST 在字符边界截断（:79-90）。
-- **terminal/output**：`{output, truncated, exitStatus?:{exitCode?, signal?}}` 非阻塞取当前输出（:142-190）。
-- **terminal/wait_for_exit**：阻塞至退出（:191-227）。
-- **terminal/kill**：杀命令但保留终端（仍可 output/wait_for_exit），**MUST** 仍要 release（:229-249）。超时由 agent 组合原语实现：create → 计时器与 wait_for_exit 竞争 → 到点 kill → output 取尾 → release（:251-262）——协议不内置 timeout 参数，用组合表达。
-- **terminal/release**：杀进程并释放全部资源，ID 失效（:264-282）。
-- **session/request_permission**：agent→client 请求用户授权（§7）。
-- **elicitation/create + elicitation/complete**：基于 MCP elicitation 数据模型的结构化问询（form 模式：受限 JSON Schema；URL 模式：带外 OAuth 流，`elicitationId` + 完成通知回连，`docs/protocol/v1/elicitation.mdx`）。form 模式 **MUST NOT** 用于索取机密（:105-111）。
-- **MCP 反向注入**：client 想把自家工具给 agent，"可以把自己作为一个 MCP server 配置传给 agent"，必要时用 stdio proxy 隧道回传（`session-setup.mdx:543-545`；`architecture.mdx:31-35` 及 mcp-proxy 图）。
-
-**为什么反转**：让"编辑器"保持对文件系统与终端的权威（含未保存缓冲、终端 UI 呈现），agent 只需说意图。但这份 client 执行面在 v2 草案中被**整体删除**：`fs/*` 与全部 `terminal/*` 方法移除，改为"client 通过 `mcpServers` 提供工具，agent 拥有 display-only 的 terminal 流"（`docs/protocol/v2/migration.mdx` "Client file system and terminal execution removed"："inconsistently implemented outside of a few IDEs"）。这是对 ARI 极有借鉴意义的教训（§11）。
+- **session/new**: params `cwd` (absolute path, MUST) + `mcpServers[]` (the stdio configuration `{name,command,args,env}` must be supported; `{type:"http",name,url,headers}` and `{type:"sse",...}` require `mcpCapabilities.http`/`sse` respectively); the response is `{sessionId}` and MAY include `modes` / `configOptions` (`docs/protocol/v1/session-setup.mdx:45-81`; MCP transport details :369-545). `cwd` rules: must be an absolute path, ignores where the subprocess was actually started, is the base for resolving relative paths, and belongs to the set of session roots (:358-367).
+- **session/load** (requires `loadSession`): pass `{sessionId, cwd, mcpServers}`; the agent **MUST** replay the entire session history to the client via `session/update` notifications (including `user_message_chunk`/`agent_message_chunk`, optionally carrying `messageId`), and only respond `{}` once the replay is complete (:83-188). This is the classic design of "state lives in the agent; the UI is rebuilt by event replay".
+- **session/resume** (requires `sessionCapabilities.resume`): same params but **MUST NOT** replay history; it responds after restoring context directly, and the response may attach initial mode/model/config state (:190-253). RFD `session-resume.mdx`; in v1 load/resume are two methods, merged in v2 into `session/resume` + a `replayFrom` cursor (`docs/protocol/v2/migration.mdx` "session/load is gone").
+- **session/close** (requires `sessionCapabilities.close`): cancels the session's in-flight work and releases resources (equivalent to a `session/cancel` first) (:255-311).
+- **session/list / session/delete**: discovery of known sessions (`cwd` filter + cursor pagination, `SessionInfo{sessionId,cwd,title,updatedAt,additionalDirectories?,_meta}`); a `session_info_update` notification can push metadata such as the title in real time (`docs/protocol/v1/session-list.mdx:35-217`); delete removes an entry from the list results (`docs/protocol/v1/session-delete.mdx`; capability `sessionCapabilities.delete`).
+- **additionalDirectories**: `session/new|load|resume` may carry additional working root directories, widening the session's filesystem boundary to `[cwd, ...additionalDirectories]`; all paths are absolute, and the full list must be re-sent on resume (`session-setup.mdx:313-344`).
+- **session/prompt**: params `{sessionId, prompt: ContentBlock[]}`; content types are constrained by promptCapabilities (`docs/protocol/v1/prompt-turn.mdx:57-98`). The response returns `{stopReason}` when the turn ends, with values `end_turn | max_tokens | max_turn_requests | refusal | cancelled` (:215-227, :292-311). **In v1 the response is the turn's endpoint** — this is the core of what v2 reworks (§9).
+- **session/cancel** (notification): the client may interrupt at any time; the client should mark unfinished tool calls as cancelled and answer all pending permission requests with the `cancelled` outcome; once stopped, the agent **MUST** respond to the original prompt with `stopReason:"cancelled"` (:312-345). The agent **MUST** catch the underlying SDK's abort exception and translate it into a semantic cancelled (:334-341 Warning).
+- **session/set_mode**: `{sessionId, modeId}` switches the mode (`docs/protocol/v1/session-modes.mdx:77-104`). There is **no** `session/set_model`; model/thought-level selection goes through config options (§8). `providers/list|set|disable` (agent methods) exist only under an unstable feature.
 
 ---
 
-## 7. 权限模型
+## 5. Streaming updates: the full set of `session/update` variants
 
-- 请求：`session/request_permission`（agent→client **请求**，即 agent 阻塞等待 JSON-RPC 响应），参数 `{sessionId, toolCall: ToolCallUpdate, options[], _meta?}`——`toolCall` 允许在请求权限的同时刷新/补全工具调用展示（`docs/protocol/v1/tool-calls.mdx:135-174`；`src/v1/client.rs:968-985`）。
-- 选项：`PermissionOption{optionId, name, kind}`，`kind ∈ allow_once | allow_always | reject_once | reject_always`（`tool-calls.mdx:213-233`；`client.rs:1092-1101`）。kind 只是 UI 提示（图标/语义），具体"记忆"策略在 client。
-- 响应：`{outcome: {outcome:"selected", optionId} | {outcome:"cancelled"}}`（`tool-calls.mdx:176-211`；`client.rs:1152-1167`，`#[serde(tag="outcome")]`）。turn 被 cancel 时 client **MUST** 对所有 pending 请求回 `cancelled`（`tool-calls.mdx:193-205`）。
-- client 可依据用户设置自动放行/拒绝（`tool-calls.mdx:191`）。
-- 级联取消：`$/cancel_request`（`{requestId}`，协议级通知，`agent-client-protocol-schema/src/v1/protocol_level.rs:73`）可用于撤销 agent 发出的单个请求（如 terminal/create 或权限请求），响应错误码 `-32800`（`docs/protocol/v1/cancellation.mdx:10-38`；级联时序 :40-68）。
-- **任务书问的 "edit param on approval"（批准时附带编辑/参数修改）**：v1 稳定协议中源码/文档中未找到——权限响应只有 selected/cancelled，无携带参数修改的字段。v2 草案的演进是把权限提示与工具状态解耦：`title`（必填）、`description?`、`subject: {type:"tool_call"|"command", ...}` 可扩展主语（`docs/protocol/v2/migration.mdx` "Permission requests"）。等价的"批准时修改输入"在 ACP 中不存在。
-- 典型用法：architect 模式下的 "switch_mode" 工具借用同一权限机制征求"退出计划模式"的确认（`session-modes.mdx:124-173`，选项 kind 映射到 allow_always/allow_once/reject_once）。
+Wire format: `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId", "update":{"sessionUpdate": <tag>, ...}}}`, with the tag in snake_case. The authoritative Rust enum is `SessionUpdate` (`agent-client-protocol-schema/src/v1/client.rs:99-169`, `#[serde(tag="sessionUpdate", rename_all="snake_case")]`):
 
----
+**v1 stable variants**:
+1. `user_message_chunk` (`ContentChunk`) — streamed chunks of the user message (appears during replay; in a live turn the user message is embedded in the prompt request).
+2. `agent_message_chunk` — streamed agent reply text/rich content (`docs/protocol/v1/prompt-turn.mdx:147-169`; `messageId` is optional: the same ID belongs to the same message, an ID change means a new message).
+3. `agent_thought_chunk` — streamed agent internal thinking (reasoning events).
+4. `tool_call` — reports a new tool call (see below).
+5. `tool_call_update` — incremental update of a tool call; every field except `toolCallId` is optional, and only changed fields are sent (`docs/protocol/v1/tool-calls.mdx:98-131`).
+6. `plan` — full replacement of the task plan: `entries[{content, priority: high|medium|low, status: pending|in_progress|completed}]`; "MUST send the complete list, and the Client replaces it wholesale" (`docs/protocol/v1/agent-plan.mdx:44-83`).
+7. `available_commands_update` — slash-command advertisement: `availableCommands[{name, description, input:{hint}}]`, pushable at any time; commands enter the prompt as plain `/cmd args` text (`docs/protocol/v1/slash-commands.mdx:8-96`).
+8. `current_mode_update` — agent-side mode change `{currentModeId}` (`session-modes.mdx:106-122`).
+9. `config_option_update` — the agent pushes the full `configOptions` (`session-config-options.mdx:318-349`).
+10. `session_info_update` — title/timestamps/`_meta` metadata (`session-list.mdx:177-217`).
+11. `usage_update` — **usage reporting has entered the v1 stable surface**: `{used, size, cost?: {amount, currency}}`, where `used`/`size` are the current context token count and window size and `cost` is the cumulative cost in ISO 4217 (`prompt-turn.mdx:190-213`; `src/v1/client.rs:609-629` `UsageUpdate{used: u64, size: u64, cost}`). Announced in `docs/announcements/session-usage-stabilized.mdx` (dated 2026-06-05).
 
-## 8. 会话模式与配置
+**v1 unstable variants** (`#[cfg(feature=...)]`, RFD drafts, off by default): `plan_update` / `plan_removed` (`unstable_plan_operations`, `client.rs:113-126`); `notice` (`unstable_session_notices`, an advisory outside the message history, :139-148); `compaction_update` / `compaction_summary_chunk` (`unstable_session_compaction`, a context-compaction entity + streamed appends of the summary, :149-168; design in `docs/rfds/session-compaction.mdx`, with `compactionId` + `status: in_progress|completed`).
 
-- **modes（v1，标记弃用中）**：session 响应可带 `modes: {currentModeId, availableModes[{id,name,description}]}`，示例即 ask/architect/code（`session-modes.mdx:15-47`）。文档头部 Note：config options 是新方式，"专用 mode 方法将在未来版本移除"（:6-11）；`session/set_mode` 与 `current_mode_update` 同理。
-- **session config options（取代者）**：agent 在 session 响应返回有序 `configOptions[]`；每项 `{id, name, description?, category?, type: "select"|"boolean", currentValue, options: ConfigOptionValue[] | ConfigOptionGroup[]}`（`session-config-options.mdx:15-110`）。语义类别 `mode | model | model_config | thought_level`，`_` 前缀类别留给自定义；类别仅供 UX（快捷键/图标/摆放），MUST 容忍未知类别（:191-211）。boolean 型需 client 先广告 `session.configOptions.boolean`（:154-189）。
-- **修改**：client 用 `session/set_config_option {sessionId, configId, value}`，agent **MUST** 返回**全量** configOptions（因为选项间可能联动，如换模型改变 reasoning 选项）；agent 主动变更推 `config_option_update`（:233-355）。v1 的 `set_config_option` 值是裸 string|boolean，v2 改为带 `type` 判别的 `{type:"id"|"boolean"}`（`migration.mdx` "Session modes become config options"）。
-- 降级策略：agent 提供 configOptions 时 SHOULD 同时保留 `modes` 供旧 client，支持 configOptions 的 client SHOULD 忽略 `modes`（:357-368）。
-
----
-
-## 9. ACP 明确不覆盖 / 覆盖不足的面
-
-- **agent loop 内部**：prompt-turn 文档只约定"agent 处理用户消息并与 LLM 交互"，对内部分轮、重试、模型切换完全无感知（`prompt-turn.mdx:100-102`）。
-- **模型 provider / API key**：无协议面；认证是 agent 账号体系（§3）。provider 管理方法仅 unstable（`v1/agent.rs:4758-4763`）+ RFD `custom-llm-endpoint.mdx`。
-- **上下文压缩**：稳定 v1 无；`usage_update` 只报窗口占用不报压缩事件；压缩作为 `compaction_update`/`compaction_summary_chunk` 处于 unstable + RFD 阶段（`docs/rfds/session-compaction.mdx`；v1 `client.rs:149-168`）。ARI 应注意：这是"runtime 内部职责泄漏到 UI"的边界案例，ACP 选择"报事件、不报机制"。
-- **子 agent**：协议无子 agent 概念。仅 `docs/rfds/proxy-chains.mdx:402` 提到"代理可通过新会话制造 subagents"、`docs/rfds/session-fork.mdx:35` 把 fork 用途之一列为 summaries/可能 subagents——即：多 agent 靠**多 session/多连接/代理层**组合，而非协议内实体。
-- **后台任务**：v1 无显式模型（turn 之外发 `session/update` 属于灰色地带）。v2 草案正面解决"beyond the turn"：prompt 响应只确认用户消息插入（返回 `messageId`），`state_update{running|idle|requires_action}` 承载前台状态与 stopReason，idle 期间后台更新可以继续（`docs/announcements/acp-v2-draft.mdx`；`migration.mdx` "The new prompt lifecycle"）。
-- **用量**：会话级 context/cost 已稳定（`usage_update`）；**每 turn 的 token 明细**（input/output/cache/reasoning 分类）仍是 Draft RFD `docs/rfds/end-turn-token-usage.mdx`（"Intentionally kept in Draft"），v1 `PromptResponse` 无 usage 字段。
-- **PTC（programmatic tool calling，模型直接在代码里调工具）**：源码/文档中未找到任何协议支持。
-- **并行工具**：无显式扇出语义；可获得性来自 JSON-RPC 双向并发（多个 in-flight 请求）+ `terminal/create` 的后台执行 + 一连接多 session（`architecture.mdx`）。取消文档的时序图（`cancellation.mdx:40-68`）明确展示了 agent 同时挂起 terminal/create 与 request_permission 两个并发请求。
-- **文件变更**：v1 的 diff 表达力有限（单文件 `oldText/newText`，无法区分删除 vs 清空、无 rename/copy/binary）；v2 草案换成结构化 `changes[]`（add/delete/modify/move/copy + fileType/mimeType）+ 可选 `git_patch`（`migration.mdx` "Diff Overhaul"/"Diff content"）。
+**tool_call details** (`docs/protocol/v1/tool-calls.mdx:14-96`; `src/v1/tool_call.rs`):
+- Fields: `toolCallId` (required), `name` (optional programmatic tool name, "advertises no capability and grants no permission"), `title` (human-readable, required), `kind`, `status`, `content[]`, `locations[]`, `rawInput`, `rawOutput` (arbitrary JSON values; on update, omitted = keep the original value).
+- `ToolKind` (`tool_call.rs:473-496`): `read | edit | delete | move | search | execute | think | fetch | switch_mode | other` (the default, backed by `#[serde(other)]`).
+- `ToolCallStatus` (`tool_call.rs:514-525`): `pending` (input still streaming, or awaiting approval) → `in_progress` → `completed | failed`.
+- Three forms of `ToolCallContent` (`tool_call.rs:546-557`): `content` (MCP-style content blocks), `diff` (`{path, oldText?, newText}` single-file text diff, `:277-295`), `terminal` (`{terminalId}` referencing the product of `terminal/create`; the client keeps displaying its live output, `terminals.mdx:113-140`).
+- `ToolCallLocation{path, line?}`: lets the client implement a "follow the agent" cursor linkage (`tool-calls.mdx:318-337`).
 
 ---
 
-## 10. 生态证据
+## 6. Client-side tool inversion: the client is the tool provider for fs/terminal
 
-- **官方 Registry**：`curl https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`，GitHub `agentclientprotocol/registry`，PR 制提交 agent manifest（`docs/get-started/_registry_agents.mdx`）；RFD 已 Completed（`docs/announcements/acp-agent-registry-stabilized.mdx`）。
-- **实现 ACP 的 agents**（`docs/get-started/agents.mdx`，节选）：Gemini CLI（google-gemini/gemini-cli）、Claude Agent（经 Zed 的 SDK adapter `zed-industries/claude-agent-acp`）、**Codex CLI（经官方 adapter `agentclientprotocol/codex-acp`）**、Qwen Code、Kimi CLI、OpenCode、Goose、Cursor CLI、GitHub Copilot CLI（public preview，changelog 链接）、Junie、Cline、Factory Droid、Mistral Vibe、OpenHands、Docker cagent、Kiro CLI 等 40+。
-- **实现 ACP 的 clients**（`docs/get-started/clients.mdx`）：Zed、JetBrains AI Assistant、Qt Creator（官方 ACP 插件）、Visual Studio（Poolside Assistant）、VS Code 多个扩展（vscode-acp、ACP Patchbay 等）、Neovim（CodeCompanion/agentic.nvim/avante.nvim/hermes.nvim）、Emacs（agent-shell.el）、Obsidian 多插件、Pulsar、Sublime、Unity、DuckDB/marimo/Jupyter 集成；CLI/TUI（acpx、Toad、Nori CLI…）；桌面/网页数十款；**消息桥**（Slack/Discord/Telegram/微信/飞书/QQ）；移动端（Happy、Runmote 等）；以及 stdio↔HTTP/WebSocket 的 connector 层（`acp_rpc_bridge`、ACP to AG-UI 等——恰好证明传输层是生态自建的补丁点）。
-- **官方 SDK**：Kotlin（acp-kotlin）、Java、Python、Rust（`agent-client-protocol` runtime crate + `agent-client-protocol-schema` schema crate）、TypeScript（`@agentclientprotocol/sdk`）（`README.md` Integrations 节）。
+ACP's most interesting architectural decision: **agent-side tool execution can call back into the client**. The connection is bidirectional JSON-RPC; the client is also a server.
 
----
+- **fs/read_text_file**: agent→client request `{sessionId, path, line?, limit?}`, returning `{content}`; can read the editor's unsaved state (`docs/protocol/v1/file-system.mdx:31-75`). Line numbers are 1-based; all paths must be absolute (`overview.mdx:212-215`).
+- **fs/write_text_file**: `{sessionId, path, content}`; the client MUST create the file if it does not exist (`file-system.mdx:77-117`).
+- **terminal/create**: `{sessionId, command, args?, env?, cwd?, outputByteLimit?}`; the client immediately returns `{terminalId}` and the command runs in the background (`docs/protocol/v1/terminals.mdx:28-111`); when `outputByteLimit` is exceeded, truncation happens from the head and MUST occur on a character boundary (:79-90).
+- **terminal/output**: `{output, truncated, exitStatus?:{exitCode?, signal?}}` fetches the current output without blocking (:142-190).
+- **terminal/wait_for_exit**: blocks until exit (:191-227).
+- **terminal/kill**: kills the command but keeps the terminal (output/wait_for_exit still usable); a release **MUST** still follow (:229-249). Timeouts are implemented by the agent composing primitives: create → race a timer against wait_for_exit → kill when it fires → output to grab the tail → release (:251-262) — the protocol has no built-in timeout parameter; it is expressed by composition.
+- **terminal/release**: kills the process and releases all resources; the ID becomes invalid (:264-282).
+- **session/request_permission**: agent→client request for user authorization (§7).
+- **elicitation/create + elicitation/complete**: structured questioning built on the MCP elicitation data model (form mode: a restricted JSON Schema; URL mode: an out-of-band OAuth flow with `elicitationId` plus a completion notification calling back, `docs/protocol/v1/elicitation.mdx`). Form mode **MUST NOT** be used to solicit secrets (:105-111).
+- **Reverse MCP injection**: when the client wants to hand its own tools to the agent, it "can pass itself to the agent as an MCP server configuration", tunneling back through a stdio proxy if necessary (`session-setup.mdx:543-545`; `architecture.mdx:31-35` and the mcp-proxy diagram).
 
-## 11. 边界分析：ACP vs ARI
-
-**重叠区**（ARI 若做，几乎必然复用 ACP 的形状）：会话抽象（`sessionId` + `session/new|prompt|cancel`）；流式更新（chunk 化的 `session/update` + 工具调用生命周期事件）；审批（options 数组 + kind 提示 + selected/cancelled outcome）；fs/terminal 的 client 桥接（client 作为工具提供方）；resume/重放语义；`_meta` 扩展与开放枚举兼容策略。
-
-**本质差异**：
-1. **对端身份不同。** ACP 的对端是"编辑器/任意 UI"，核心动机是 UX（`architecture.mdx` "UX-first"；diff、跟随光标、终端 live 输出都是编辑器场景）。ARI 的对端是 Coding Shell ↔ Agent Runtime/Harness：Shell 不只是渲染器，它自己有 loop、上下文、工具与任务编排，需要的是**运行时托管与委派**（会话编排、后台任务、并发工具、压缩边界、usage 结算），而非"给编辑器补一个聊天面板"。证据：ACP v2 才补 `state_update`（running/idle/requires_action）与 turn 之外的事件流，且把 client 执行面删掉——恰恰说明"编辑器当工具宿主"的模型撑不住更厚的 runtime 场景。
-2. **所有权方向相反。** ACP v1：状态在 agent，文件/终端权威在 client（反转）。v2：全部回收给 agent（agent-owned terminal、经 MCP 提供工具）。ARI 应一开始就明确：**上下文与历史的权威在 Runtime**，Shell 持有的是展示态与其本地资源（workspace、凭据、终端）；工具执行权按资源归属分配，而不是按"谁是编辑器"分配。
-3. **粒度。** ACP 的 session ≈ 一个对话线程；ARI 需要的 task/session 层级（subagent、fan-out、后台任务、取消树）在 ACP 里只有 proxy/fork 的 RFD 雏形（§9）。
-
-**ARI 不应从 ACP 抄的东西**：
-- **fs/terminal 反转执行面**（v1 的 `fs/*`、`terminal/*`）——ACP 自己已在 v2 弃用，理由是"除少数 IDE 外实现不一致"；ARI 用 MCP/工具清单桥接 client 资源即可。
-- **turn 与请求生命周期绑死**（v1 prompt-response=turn）——v2 已改；ARI 从第一天起就该把"提交输入"与"工作进度/完成"分离（参考 `state_update`）。
-- **modes 双轨**（`modes` + configOptions 并存）——弃用期双轨是历史包袱，ARI 只需 config/selector 一种机制。
-- **int 魔数 protocolVersion + 语义靠文档**——可借但其版本策略应配 capability 位图而非仅 MAJOR 整数。
-
-**值得 ARI 抄的东西**：
-- **权限 options 模型**：`{optionId, name, kind: allow_once|allow_always|reject_once|reject_always}` + `selected/cancelled` outcome + "cancelled 不算错误"语义（`tool-calls.mdx`、`prompt-turn.mdx:334-341`）——简单、可本地化、client 可自动化；v2 的 `subject` tagged union（tool_call/command 可扩展）把"请求什么"与"展示什么"解耦，也值得照搬。
-- **tool_call 生命周期**：`pending（等待输入/批准）→ in_progress → completed/failed` + `toolCallId` 幂等 upsert + `rawInput/rawOutput` 透传 + `locations` 跟随 + `kind` 分类（`tool_call.rs:473-525`）。ARI 的工具事件流可以直接对齐这套状态机以换取生态心智。
-- **update chunking 与 upsert 补丁语义**：v2 的三态补丁（缺省=不变 / null=清除 / 值=替换；chunk=追加）+ 必填 `messageId`（`migration.mdx` "Updates are upserts"）是流式 UI 的正解，避免 v1 `tool_call`/`tool_call_update` 双方法与 plan 全量重放的尴尬。
-- **NDJSON-over-stdio 分帧与 stdout 纯净规则**（§2）——比 LSP 的 Content-Length 简单一个数量级，且可 `grep`/`jq` 调试；`MUST NOT` 污染 stdout 的规则必须保留。
-- **`_meta` + `_` 前缀扩展法与开放枚举**——向前兼容成本低。
-- **cancelled 级联模型**：`session/cancel`（语义级）+ `$/cancel_request`（请求级，-32800）两层取消（`cancellation.mdx`）。
+**Why the inversion**: it keeps the "editor" authoritative over the filesystem and terminal (including unsaved buffers and terminal UI rendering), so the agent only needs to state intent. But this client execution surface is **deleted wholesale** in the v2 draft: the `fs/*` methods and all `terminal/*` methods are removed, replaced by "the client provides tools via `mcpServers`, and the agent owns display-only terminal streams" (`docs/protocol/v2/migration.mdx` "Client file system and terminal execution removed": "inconsistently implemented outside of a few IDEs"). This is a highly instructive lesson for ARI (§11).
 
 ---
 
-## 12. Capability Matrix —— ACP 行
+## 7. Permission model
+
+- Request: `session/request_permission` (an agent→client **request**, i.e. the agent blocks waiting on the JSON-RPC response), params `{sessionId, toolCall: ToolCallUpdate, options[], _meta?}` — `toolCall` allows refreshing/completing the tool call display at the same time as requesting permission (`docs/protocol/v1/tool-calls.mdx:135-174`; `src/v1/client.rs:968-985`).
+- Options: `PermissionOption{optionId, name, kind}` with `kind ∈ allow_once | allow_always | reject_once | reject_always` (`tool-calls.mdx:213-233`; `client.rs:1092-1101`). kind is only a UI hint (icon/semantics); the concrete "remember" policy lives in the client.
+- Response: `{outcome: {outcome:"selected", optionId} | {outcome:"cancelled"}}` (`tool-calls.mdx:176-211`; `client.rs:1152-1167`, `#[serde(tag="outcome")]`). When the turn is cancelled, the client **MUST** answer all pending requests with `cancelled` (`tool-calls.mdx:193-205`).
+- The client may auto-allow/auto-deny based on user settings (`tool-calls.mdx:191`).
+- Cascade cancellation: `$/cancel_request` (`{requestId}`, a protocol-level notification, `agent-client-protocol-schema/src/v1/protocol_level.rs:73`) can retract a single request issued by the agent (e.g. terminal/create or a permission request), with response error code `-32800` (`docs/protocol/v1/cancellation.mdx:10-38`; cascade sequence :40-68).
+- **The "edit param on approval" the task brief asked about (attaching edits/parameter modifications at approval time)**: not found anywhere in the v1 stable protocol's sources/docs — the permission response is only selected/cancelled, with no field carrying parameter modifications. The v2 draft's evolution decouples the permission prompt from tool state: `title` (required), `description?`, and an extensible `subject: {type:"tool_call"|"command", ...}` (`docs/protocol/v2/migration.mdx` "Permission requests"). An equivalent of "modify the input at approval time" does not exist in ACP.
+- Typical usage: in architect mode, a "switch_mode" tool borrows the same permission mechanism to ask for confirmation of "leaving plan mode" (`session-modes.mdx:124-173`, with option kinds mapped to allow_always/allow_once/reject_once).
+
+---
+
+## 8. Session modes and configuration
+
+- **modes (v1, flagged for deprecation)**: the session response may carry `modes: {currentModeId, availableModes[{id,name,description}]}`, with ask/architect/code as the canonical example (`session-modes.mdx:15-47`). A Note at the top of the doc: config options are the new way, and "the dedicated mode methods will be removed in a future version" (:6-11); the same applies to `session/set_mode` and `current_mode_update`.
+- **session config options (the successor)**: the agent returns an ordered `configOptions[]` in the session response; each item is `{id, name, description?, category?, type: "select"|"boolean", currentValue, options: ConfigOptionValue[] | ConfigOptionGroup[]}` (`session-config-options.mdx:15-110`). Semantic categories are `mode | model | model_config | thought_level`, with `_`-prefixed categories reserved for custom ones; categories exist only for UX (shortcuts/icons/placement), and unknown categories MUST be tolerated (:191-211). The boolean type requires the client to have advertised `session.configOptions.boolean` first (:154-189).
+- **Modification**: the client uses `session/set_config_option {sessionId, configId, value}`, and the agent **MUST** return the **full** configOptions (because options can be interlinked — e.g. switching the model changes the reasoning option); agent-initiated changes are pushed as `config_option_update` (:233-355). In v1 the `set_config_option` value is a bare string|boolean; v2 changes it to a `type`-tagged `{type:"id"|"boolean"}` (`migration.mdx` "Session modes become config options").
+- Degradation strategy: when an agent provides configOptions it SHOULD also keep `modes` for older clients, and clients that support configOptions SHOULD ignore `modes` (:357-368).
+
+---
+
+## 9. Surfaces ACP explicitly does not cover / covers insufficiently
+
+- **Agent loop internals**: the prompt-turn doc only stipulates that "the agent processes the user message and interacts with the LLM"; it is completely oblivious to internal turn-splitting, retries, and model switching (`prompt-turn.mdx:100-102`).
+- **Model provider / API key**: no protocol surface; authentication is the agent's account system (§3). Provider management methods are unstable-only (`v1/agent.rs:4758-4763`) plus the RFD `custom-llm-endpoint.mdx`.
+- **Context compaction**: absent from stable v1; `usage_update` reports only window occupancy, not compaction events; compaction, as `compaction_update`/`compaction_summary_chunk`, is at the unstable + RFD stage (`docs/rfds/session-compaction.mdx`; v1 `client.rs:149-168`). ARI should note: this is a boundary case of "runtime internal responsibility leaking into the UI", and ACP chose "report events, not mechanisms".
+- **Subagents**: the protocol has no subagent concept. Only `docs/rfds/proxy-chains.mdx:402` mentions that "a proxy can create subagents via new sessions", and `docs/rfds/session-fork.mdx:35` lists summaries/possible subagents as one use of fork — i.e. multiple agents are achieved by composing **multiple sessions / multiple connections / proxy layers**, not as in-protocol entities.
+- **Background tasks**: v1 has no explicit model (emitting `session/update` outside a turn is a gray area). The v2 draft tackles "beyond the turn" head-on: the prompt response only confirms insertion of the user message (returning `messageId`), `state_update{running|idle|requires_action}` carries foreground state and the stopReason, and background updates may continue while idle (`docs/announcements/acp-v2-draft.mdx`; `migration.mdx` "The new prompt lifecycle").
+- **Usage**: session-level context/cost is stable (`usage_update`); the **per-turn token breakdown** (input/output/cache/reasoning categories) remains a Draft RFD, `docs/rfds/end-turn-token-usage.mdx` ("Intentionally kept in Draft"), and v1 `PromptResponse` has no usage field.
+- **PTC (programmatic tool calling, the model calling tools directly in code)**: no protocol support found anywhere in the sources/docs.
+- **Parallel tools**: no explicit fan-out semantics; availability comes from bidirectional JSON-RPC concurrency (multiple in-flight requests) + the background execution of `terminal/create` + multiple sessions per connection (`architecture.mdx`). The cancellation doc's sequence diagram (`cancellation.mdx:40-68`) explicitly shows the agent with terminal/create and request_permission outstanding as two concurrent requests at once.
+- **File changes**: v1's diff expressiveness is limited (single-file `oldText/newText`; cannot distinguish deletion vs emptying; no rename/copy/binary); the v2 draft switches to structured `changes[]` (add/delete/modify/move/copy + fileType/mimeType) plus an optional `git_patch` (`migration.mdx` "Diff Overhaul"/"Diff content").
+
+---
+
+## 10. Ecosystem evidence
+
+- **Official registry**: `curl https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, GitHub `agentclientprotocol/registry`, agent manifests submitted via PRs (`docs/get-started/_registry_agents.mdx`); the RFD is Completed (`docs/announcements/acp-agent-registry-stabilized.mdx`).
+- **Agents implementing ACP** (`docs/get-started/agents.mdx`, excerpt): Gemini CLI (google-gemini/gemini-cli), Claude Agent (via Zed's SDK adapter `zed-industries/claude-agent-acp`), **Codex CLI (via the official adapter `agentclientprotocol/codex-acp`)**, Qwen Code, Kimi CLI, OpenCode, Goose, Cursor CLI, GitHub Copilot CLI (public preview, changelog link), Junie, Cline, Factory Droid, Mistral Vibe, OpenHands, Docker cagent, Kiro CLI, and 40+ in total.
+- **Clients implementing ACP** (`docs/get-started/clients.mdx`): Zed, JetBrains AI Assistant, Qt Creator (official ACP plugin), Visual Studio (Poolside Assistant), multiple VS Code extensions (vscode-acp, ACP Patchbay, etc.), Neovim (CodeCompanion/agentic.nvim/avante.nvim/hermes.nvim), Emacs (agent-shell.el), multiple Obsidian plugins, Pulsar, Sublime, Unity, DuckDB/marimo/Jupyter integrations; CLI/TUI (acpx, Toad, Nori CLI, ...); dozens of desktop/web apps; **message bridges** (Slack/Discord/Telegram/WeChat/Feishu/QQ); mobile (Happy, Runmote, etc.); plus connector layers for stdio↔HTTP/WebSocket (`acp_rpc_bridge`, ACP to AG-UI, etc. — which is precisely proof that the transport layer is the patch point the ecosystem builds for itself).
+- **Official SDKs**: Kotlin (acp-kotlin), Java, Python, Rust (`agent-client-protocol` runtime crate + `agent-client-protocol-schema` schema crate), TypeScript (`@agentclientprotocol/sdk`) (`README.md` Integrations section).
+
+---
+
+## 11. Boundary analysis: ACP vs ARI
+
+**Overlap** (if ARI builds these, it will almost certainly reuse ACP's shapes): the session abstraction (`sessionId` + `session/new|prompt|cancel`); streaming updates (chunked `session/update` + tool call lifecycle events); approval (options array + kind hints + selected/cancelled outcome); the client bridge for fs/terminal (the client as tool provider); resume/replay semantics; `_meta` extension and the open-enum compatibility strategy.
+
+**Essential differences**:
+1. **Different counterpart identity.** ACP's counterpart is "the editor / any UI", with UX as the core motivation (`architecture.mdx` "UX-first"; diffs, cursor following, and terminal live output are all editor scenarios). ARI's counterparts are Coding Shell ↔ Agent Runtime/Harness: the shell is not just a renderer — it has its own loop, context, tools, and task orchestration, and what it needs is **runtime hosting and delegation** (session orchestration, background tasks, concurrent tools, compaction boundaries, usage settlement), not "adding a chat panel to an editor". Evidence: only in ACP v2 were `state_update` (running/idle/requires_action) and an event stream beyond the turn added, and the client execution surface was deleted — precisely showing that the "editor as tool host" model cannot sustain thicker runtime scenarios.
+2. **Opposite direction of ownership.** ACP v1: state lives in the agent, while file/terminal authority lives in the client (inversion). v2: everything is reclaimed by the agent (agent-owned terminals, tools provided via MCP). ARI should be explicit from day one: **authority over context and history belongs to the Runtime**, while the shell holds the display state and its local resources (workspace, credentials, terminal); tool execution rights are assigned by resource ownership, not by "who is the editor".
+3. **Granularity.** An ACP session ≈ one conversation thread; the task/session hierarchy ARI needs (subagents, fan-out, background tasks, cancellation trees) exists in ACP only as the embryonic proxy/fork RFDs (§9).
+
+**What ARI should not copy from ACP**:
+- **The fs/terminal inverted execution surface** (v1's `fs/*`, `terminal/*`) — ACP itself has already deprecated it in v2, on the grounds of "inconsistently implemented outside of a few IDEs"; ARI can simply bridge client resources via MCP/tool manifests.
+- **Binding the turn to the request lifecycle** (v1 prompt-response=turn) — v2 has already changed this; ARI should separate "input submission" from "work progress/completion" from day one (see `state_update`).
+- **The dual track of modes** (`modes` coexisting with configOptions) — a dual track during a deprecation window is historical baggage; ARI needs only a single config/selector mechanism.
+- **The int magic-number protocolVersion with semantics living in docs** — borrowable, but the version policy should come with a capability bitmap rather than only a MAJOR integer.
+
+**What is worth copying for ARI**:
+- **The permission options model**: `{optionId, name, kind: allow_once|allow_always|reject_once|reject_always}` + the `selected/cancelled` outcome + the "cancelled is not an error" semantics (`tool-calls.mdx`, `prompt-turn.mdx:334-341`) — simple, localizable, and automatable by the client; v2's `subject` tagged union (tool_call/command, extensible) decouples "what is being requested" from "what is displayed", also worth copying outright.
+- **The tool_call lifecycle**: `pending (awaiting input/approval) → in_progress → completed/failed` + idempotent upsert keyed by `toolCallId` + pass-through of `rawInput/rawOutput` + `locations` following + `kind` classification (`tool_call.rs:473-525`). ARI's tool event stream can align directly with this state machine in exchange for ecosystem mindshare.
+- **Update chunking and upsert patch semantics**: v2's three-state patch (omitted = unchanged / null = clear / value = replace; chunk = append) + the required `messageId` (`migration.mdx` "Updates are upserts") is the right answer for streaming UIs, avoiding the awkwardness of v1's `tool_call`/`tool_call_update` method pair and the plan's full-list replacement.
+- **NDJSON-over-stdio framing and the stdout purity rule** (§2) — an order of magnitude simpler than LSP's Content-Length, and debuggable with `grep`/`jq`; the `MUST NOT` pollute stdout rule must be kept.
+- **The `_meta` + `_`-prefix extension approach and open enums** — low forward-compatibility cost.
+- **The cancelled cascade model**: two layers of cancellation — `session/cancel` (semantic level) + `$/cancel_request` (request level, -32800) (`cancellation.mdx`).
+
+---
+
+## 12. Capability Matrix — the ACP row
 
 | Session | Resume | Streaming | Cancellation | Approval | Tool events | File changes | Terminal | Background task | Parallel tools | Compaction | Subagent | Usage | Reasoning events | PTC |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | ✓ | ✓ (partial*) | ✓ | ✓ | ✓ | ✓ | partial | ✓ (v1 client-run / v2 agent-display) | ✗ (v1) / partial (v2 draft) | partial | partial (unstable) | ✗ | partial (session-level ✓, per-turn ✗) | ✓ | ✗ |
 
-证据指针：Session = `session/new` + 一连接多 session（`docs/get-started/architecture.mdx:20`，`session-setup.mdx:45-81`）；Resume = `session/load` 重放 + `session/resume` 免重放（`session-setup.mdx:83-253`，*两者 v2 合并）；Streaming = `session/update` 11 种稳定变体（`v1/client.rs:99-169`）；Cancellation = `session/cancel` + `$/cancel_request`/-32800（`prompt-turn.mdx:312-345`，`cancellation.mdx:10-38`）；Approval = `session/request_permission` 4 种 kind（`tool-calls.mdx:133-233`）；Tool events = tool_call 生命周期 + rawInput/rawOutput（`tool-calls.mdx:14-131`）；File changes = 单文件 oldText/newText diff + locations（`tool-calls.mdx:277-295`，v2 结构化 changes：`migration.mdx`）；Terminal = client 侧 `terminal/*` 五方法（`terminals.mdx`）；Background = v1 无协议面、v2 `state_update`+idle 后台更新（`acp-v2-draft.mdx`）；Parallel = 无显式扇出，仅并发请求 + 后台 terminal + 多 session（`cancellation.mdx:40-68`）；Compaction = unstable feature + RFD（`v1/client.rs:149-168`，`rfds/session-compaction.mdx`）；Subagent = 源码/文档中未找到（仅 `rfds/proxy-chains.mdx:402`、`rfds/session-fork.mdx:35` 提及组合方式）；Usage = `usage_update`（context+cost，稳定）而 per-turn token 明细 Draft（`prompt-turn.mdx:190-213`，`rfds/end-turn-token-usage.mdx`）；Reasoning = `agent_thought_chunk`（`v1/client.rs:104-105`）；PTC = 源码/文档中未找到。
+Evidence pointers: Session = `session/new` + multiple sessions per connection (`docs/get-started/architecture.mdx:20`, `session-setup.mdx:45-81`); Resume = `session/load` replay + `session/resume` without replay (`session-setup.mdx:83-253`, *the two are merged in v2*); Streaming = the 11 stable variants of `session/update` (`v1/client.rs:99-169`); Cancellation = `session/cancel` + `$/cancel_request`/-32800 (`prompt-turn.mdx:312-345`, `cancellation.mdx:10-38`); Approval = `session/request_permission` with 4 kinds (`tool-calls.mdx:133-233`); Tool events = the tool_call lifecycle + rawInput/rawOutput (`tool-calls.mdx:14-131`); File changes = single-file oldText/newText diff + locations (`tool-calls.mdx:277-295`; v2 structured changes: `migration.mdx`); Terminal = the five client-side `terminal/*` methods (`terminals.mdx`); Background = no v1 protocol surface, v2 `state_update` + idle-time background updates (`acp-v2-draft.mdx`); Parallel = no explicit fan-out, only concurrent requests + background terminal + multiple sessions (`cancellation.mdx:40-68`); Compaction = unstable feature + RFD (`v1/client.rs:149-168`, `rfds/session-compaction.mdx`); Subagent = not found in the sources/docs (only `rfds/proxy-chains.mdx:402` and `rfds/session-fork.mdx:35` mention composition approaches); Usage = `usage_update` (context+cost, stable) while the per-turn token breakdown is Draft (`prompt-turn.mdx:190-213`, `rfds/end-turn-token-usage.mdx`); Reasoning = `agent_thought_chunk` (`v1/client.rs:104-105`); PTC = not found in the sources/docs.
 
 ---
 
-## 13. 传输层判断：JSON-RPC-over-stdio 是否污染数据模型？
+## 13. Transport-layer verdict: does JSON-RPC-over-stdio pollute the data model?
 
-**基本不污染，且有明显的刻意隔离。** 论据：
+**Basically no, and the isolation is clearly deliberate.** Arguments:
 
-1. **数据模型对传输无感**：`transports.mdx:50` 明言 "The protocol is transport-agnostic"；schema（`schema/v1/schema.json` 及 Rust crate）只描述 params/result，不出现任何 stdio/帧概念；JSON-RPC 信封被压缩到 `rpc.rs` 的三个薄类型（`Request`/`Notification`/`JsonRpcMessage`），方法名是纯字符串常量表（`meta.json`）。换 HTTP/WebSocket 时消息体不变（`rfds/streamable-http-websocket-transport.mdx`："same JSON-RPC message format and ACP lifecycle as the existing stdio transport"）。
-2. **NDJSON 是正确的取舍**：JSON 序列化本身转义换行，"MUST NOT contain embedded newlines"（`transports.mdx:24`）不损失表达力；换来可 `head`/`grep`/`jq` 直调 agent、无 LSP 式头部状态机。代价只有一条：单行超长（大 base64 图片/音频）会撑大内存缓冲——TS `LineBuffer` 与 Rust `Lines` 都要缓存半行；`outputByteLimit` 这类字段的出现说明生态已感知大负载问题。
-3. **batch 是" SDK 先行、规范后补"的轻微裂缝**：v1 规范说消息是"individual JSON-RPC requests, notifications, or responses"（`transports.mdx:23`），未授权 batch；rust-sdk 的分帧层却统一支持 batch（`md/transport-architecture.md` "JSON-RPC Batch Behavior ... shared by the stable v1 and draft v2 APIs"）；v2 规范才正式收编 batch 并警告"勿 batch 生命周期敏感消息"（`migration.mdx` Transports 节）。ARI 教训：**分帧语义要进 v1 规范**，否则 SDK 会替规范做决定。
-4. **JSON-RPC 层约定成了隐性协议面**：`$/cancel_request` 与 `-32800`（`protocol_level.rs:73`、`cancellation.mdx:22`）是 LSP 式的 JSON-RPC 约定，位于"协议级"而非 ACP 数据模型——这个分层（protocol-level vs session-level 方法）本身是干净的。
-5. **版本协商**：`initialize` 内嵌的 `protocolVersion` 整数（MAJOR-only）+ 能力位（omitted=unsupported）双轨（§2）；v2 草案沿用同一机制并要求"一连接一版本"（`migration.mdx` Version negotiation）。整数版本 + capability 的组合对 ARI 够用，但 ACP 的"artifact 版本（crate/schema）与 wire 版本解耦"声明（`README.md` Versioning）值得 ARI 写进规范第一页——SDK 版本号不等于协议版本号是最常见的社区误读。
+1. **The data model is transport-agnostic**: `transports.mdx:50` states plainly "The protocol is transport-agnostic"; the schema (`schema/v1/schema.json` and the Rust crate) describes only params/result, with no stdio/frame concepts anywhere; the JSON-RPC envelope is compressed into three thin types in `rpc.rs` (`Request`/`Notification`/`JsonRpcMessage`), and method names are a pure string-constant table (`meta.json`). Switching to HTTP/WebSocket leaves the message body unchanged (`rfds/streamable-http-websocket-transport.mdx`: "same JSON-RPC message format and ACP lifecycle as the existing stdio transport").
+2. **NDJSON is the right trade-off**: JSON serialization escapes newlines by itself, so "MUST NOT contain embedded newlines" (`transports.mdx:24`) loses no expressiveness; in exchange, the agent can be driven directly with `head`/`grep`/`jq` and there is no LSP-style header state machine. The only cost: a single overlong line (large base64 images/audio) balloons the in-memory buffer — both the TS `LineBuffer` and Rust `Lines` must buffer partial lines; the appearance of fields like `outputByteLimit` shows the ecosystem has already felt the large-payload problem.
+3. **Batch is a small crack of "SDK first, spec catches up"**: the v1 spec says messages are "individual JSON-RPC requests, notifications, or responses" (`transports.mdx:23`) and does not authorize batch; yet the rust-sdk's framing layer uniformly supports batch (`md/transport-architecture.md` "JSON-RPC Batch Behavior ... shared by the stable v1 and draft v2 APIs"); only the v2 spec formally brings batch into the fold and warns "do not batch lifecycle-sensitive messages" (`migration.mdx` Transports section). Lesson for ARI: **framing semantics must go into the v1 spec**, otherwise the SDK will make the decision for the spec.
+4. **JSON-RPC-layer conventions have become an implicit protocol surface**: `$/cancel_request` and `-32800` (`protocol_level.rs:73`, `cancellation.mdx:22`) are LSP-style JSON-RPC conventions, located at the "protocol level" rather than in the ACP data model — this layering (protocol-level vs session-level methods) is itself clean.
+5. **Version negotiation**: the `protocolVersion` integer (MAJOR-only) embedded in `initialize` + capability bits (omitted = unsupported) as a dual track (§2); the v2 draft keeps the same mechanism and requires "one version per connection" (`migration.mdx` Version negotiation). The integer-version + capability combination is enough for ARI, but ACP's declaration that "artifact versions (crate/schema) are decoupled from the wire version" (`README.md` Versioning) deserves a place on page one of the ARI spec — "the SDK version number is not the protocol version number" is the most common community misreading.
 
 ---
 
-## 14. 方法 / 通知参考表（ACP v1 稳定面）
+## 14. Method / notification reference tables (ACP v1 stable surface)
 
-方法名以 `schema/v1/meta.json` 与 `v1/agent.rs:4753-4789`、`v1/client.rs:2689-2707` 常量为准；方向：A=agent 实现（client 调用），C=client 实现（agent 调用），P=协议级双向。
+Method names follow the constants in `schema/v1/meta.json` and `v1/agent.rs:4753-4789`, `v1/client.rs:2689-2707`; directions: A = implemented by the agent (called by the client), C = implemented by the client (called by the agent), P = protocol-level, bidirectional.
 
-### Client → Agent（agent 侧方法）
+### Client → Agent (agent-side methods)
 
-| 方法 | 类型 | 参数 → 结果 | 能力门槛 | 证据 |
+| Method | Type | Params → Result | Capability gate | Evidence |
 |---|---|---|---|---|
-| `initialize` | Request | `{protocolVersion, clientCapabilities, clientInfo?}` → `{protocolVersion, agentCapabilities, agentInfo?, authMethods[]}` | 无（基线） | initialization.mdx:24-98；v1/agent.rs:4753 |
-| `authenticate` | Request | `{methodId}` → `{}` | `authMethods` 广告 `type:"agent"` 方法 | authentication.mdx:134-167；agent.rs:4755 |
-| `logout` | Request | `{}` → `{}` | `agentCapabilities.auth.logout` | authentication.mdx:190-216；agent.rs:4789 |
-| `session/new` | Request | `{cwd, mcpServers[], additionalDirectories?}` → `{sessionId, modes?, configOptions?}` | 基线；additionalDirectories 需 cap | session-setup.mdx:45-81,313-344 |
-| `session/load` | Request | `{sessionId, cwd, mcpServers[]}` → `{}`（响应前重放历史） | `loadSession` | session-setup.mdx:83-188 |
-| `session/resume` | Request | `{sessionId, cwd, mcpServers[]}` → `{}`（可附 mode/model/config） | `sessionCapabilities.resume` | session-setup.mdx:190-253 |
+| `initialize` | Request | `{protocolVersion, clientCapabilities, clientInfo?}` → `{protocolVersion, agentCapabilities, agentInfo?, authMethods[]}` | none (baseline) | initialization.mdx:24-98; v1/agent.rs:4753 |
+| `authenticate` | Request | `{methodId}` → `{}` | `authMethods` advertises a `type:"agent"` method | authentication.mdx:134-167; agent.rs:4755 |
+| `logout` | Request | `{}` → `{}` | `agentCapabilities.auth.logout` | authentication.mdx:190-216; agent.rs:4789 |
+| `session/new` | Request | `{cwd, mcpServers[], additionalDirectories?}` → `{sessionId, modes?, configOptions?}` | baseline; additionalDirectories requires a cap | session-setup.mdx:45-81,313-344 |
+| `session/load` | Request | `{sessionId, cwd, mcpServers[]}` → `{}` (history replayed before the response) | `loadSession` | session-setup.mdx:83-188 |
+| `session/resume` | Request | `{sessionId, cwd, mcpServers[]}` → `{}` (may attach mode/model/config) | `sessionCapabilities.resume` | session-setup.mdx:190-253 |
 | `session/close` | Request | `{sessionId}` → `{}` | `sessionCapabilities.close` | session-setup.mdx:255-311 |
 | `session/list` | Request | `{cwd?, cursor?}` → `{sessions[SessionInfo], nextCursor?}` | `sessionCapabilities.list` | session-list.mdx:66-176 |
-| `session/delete` | Request | `{sessionId}` → `{}` | `sessionCapabilities.delete` | session-delete.mdx；agent.rs:4780 |
-| `session/prompt` | Request | `{sessionId, prompt[ContentBlock]}` → `{stopReason}` | 基线 | prompt-turn.mdx:57-98,292-311 |
-| `session/set_mode` | Request | `{sessionId, modeId}` → `{modes?}` | 无（弃用中） | session-modes.mdx:77-104；agent.rs:4770 |
-| `session/set_config_option` | Request | `{sessionId, configId, value}` → `{configOptions[] 全量}` | 无（boolean 型需 client cap） | session-config-options.mdx:237-316 |
-| `session/cancel` | Notification | `{sessionId}` | 基线 | prompt-turn.mdx:312-345；agent.rs:4776 |
+| `session/delete` | Request | `{sessionId}` → `{}` | `sessionCapabilities.delete` | session-delete.mdx; agent.rs:4780 |
+| `session/prompt` | Request | `{sessionId, prompt[ContentBlock]}` → `{stopReason}` | baseline | prompt-turn.mdx:57-98,292-311 |
+| `session/set_mode` | Request | `{sessionId, modeId}` → `{modes?}` | none (deprecating) | session-modes.mdx:77-104; agent.rs:4770 |
+| `session/set_config_option` | Request | `{sessionId, configId, value}` → `{configOptions[] full set}` | none (boolean type requires a client cap) | session-config-options.mdx:237-316 |
+| `session/cancel` | Notification | `{sessionId}` | baseline | prompt-turn.mdx:312-345; agent.rs:4776 |
 
-### Agent → Client（client 侧方法/通知）
+### Agent → Client (client-side methods/notifications)
 
-| 方法 | 类型 | 参数 → 结果 | 能力门槛 | 证据 |
+| Method | Type | Params → Result | Capability gate | Evidence |
 |---|---|---|---|---|
-| `session/update` | Notification | `{sessionId, update{sessionUpdate: <tag>, ...}}` | 基线（各 tag 见 §5） | v1/client.rs:99-169,2689 |
-| `session/request_permission` | Request | `{sessionId, toolCall:ToolCallUpdate, options[]}` → `{outcome}` | 基线方法 | tool-calls.mdx:133-233；client.rs:968 |
-| `fs/read_text_file` | Request | `{sessionId, path, line?, limit?}` → `{content}` | `fs.readTextFile` | file-system.mdx:31-75；client.rs:2695 |
+| `session/update` | Notification | `{sessionId, update{sessionUpdate: <tag>, ...}}` | baseline (tags in §5) | v1/client.rs:99-169,2689 |
+| `session/request_permission` | Request | `{sessionId, toolCall:ToolCallUpdate, options[]}` → `{outcome}` | baseline method | tool-calls.mdx:133-233; client.rs:968 |
+| `fs/read_text_file` | Request | `{sessionId, path, line?, limit?}` → `{content}` | `fs.readTextFile` | file-system.mdx:31-75; client.rs:2695 |
 | `fs/write_text_file` | Request | `{sessionId, path, content}` → `{}` | `fs.writeTextFile` | file-system.mdx:77-117 |
 | `terminal/create` | Request | `{sessionId, command, args?, env?, cwd?, outputByteLimit?}` → `{terminalId}` | `terminal` | terminals.mdx:28-111 |
 | `terminal/output` | Request | `{sessionId, terminalId}` → `{output, truncated, exitStatus?}` | `terminal` | terminals.mdx:142-190 |
@@ -263,20 +263,20 @@ ACP 最有意思的架构决定：**agent 侧工具执行可以反向调用 clie
 | `elicitation/create` | Request | `{sessionId|requestId, mode:"form"|"url", message, requestedSchema?/elicitationId+url}` → `{action: accept/decline/cancel, content?}` | `elicitation.form/url` | elicitation.mdx:57-167 |
 | `elicitation/complete` | Notification | `{sessionId?, elicitationId}` | URL mode | elicitation.mdx:155-167 |
 
-### 协议级（双向）
+### Protocol-level (bidirectional)
 
-| 方法 | 类型 | 参数 | 语义 | 证据 |
+| Method | Type | Params | Semantics | Evidence |
 |---|---|---|---|---|
-| `$/cancel_request` | Notification | `{requestId}` | 请求级取消；响应 `-32800` | protocol_level.rs:73-106；cancellation.mdx:10-38 |
+| `$/cancel_request` | Notification | `{requestId}` | request-level cancellation; response `-32800` | protocol_level.rs:73-106; cancellation.mdx:10-38 |
 
-### `session/update` 变体速查（v1 稳定 + unstable）
+### `session/update` variant quick reference (v1 stable + unstable)
 
-`user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` / `tool_call` / `tool_call_update` / `plan` / `available_commands_update` / `current_mode_update` / `config_option_update` / `session_info_update` / `usage_update`；unstable：`plan_update`、`plan_removed`、`notice`、`compaction_update`、`compaction_summary_chunk`（`v1/client.rs:99-169`）。
+`user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` / `tool_call` / `tool_call_update` / `plan` / `available_commands_update` / `current_mode_update` / `config_option_update` / `session_info_update` / `usage_update`; unstable: `plan_update`, `plan_removed`, `notice`, `compaction_update`, `compaction_summary_chunk` (`v1/client.rs:99-169`).
 
 ---
 
-## 15. 结论（给 ARI 的三句话）
+## 15. Conclusion (three sentences for ARI)
 
-1. ACP 证明了"薄协议 + 双向 JSON-RPC + NDJSON stdio + 能力协商 + `_meta` 扩展"足以支撑一个跨 40+ agent、数百 client 的生态；ARI 的会话/流式/审批层可以近乎照抄其形状（特别是 permission options、tool_call 状态机、upsert 补丁语义、cancelled≠error）。
-2. ACP 的两次自我修正——v2 删除 client 执行面（fs/terminal）、v2 把 turn 从 prompt 响应中解耦（`state_update`）——正是 ARI 的起点而非终点：**ARI 面向"Shell ↔ Runtime"解耦，第一天就要按 v2 的形态设计**（事件流自持、输入提交与工作状态分离、client 资源经工具清单暴露），并补上 ACP 没有的后台任务、并发编排、per-turn usage、压缩与子 agent 的协议面。
-3. 版本与传输纪律：整数 MAJOR `protocolVersion` + 能力位 + artifact 版本与 wire 版本解耦（照抄）；NDJSON-over-stdio 与 stdout 纯净规则（照抄）；分帧/batch 语义必须写进第一版规范（吸取 ACP 的 batch 裂缝）。
+1. ACP proves that "a thin protocol + bidirectional JSON-RPC + NDJSON stdio + capability negotiation + `_meta` extensions" is enough to sustain an ecosystem spanning 40+ agents and hundreds of clients; ARI's session/streaming/approval layers can copy its shapes nearly verbatim (especially permission options, the tool_call state machine, upsert patch semantics, and cancelled≠error).
+2. ACP's two self-corrections — v2 deleting the client execution surface (fs/terminal), and v2 decoupling the turn from the prompt response (`state_update`) — are ARI's starting point, not its end state: **ARI targets "Shell ↔ Runtime" decoupling and must be designed in the v2 shape from day one** (a self-standing event stream, input submission separated from work state, client resources exposed via a tool manifest), while adding the protocol surfaces ACP lacks: background tasks, concurrency orchestration, per-turn usage, compaction, and subagents.
+3. Versioning and transport discipline: integer MAJOR `protocolVersion` + capability bits + artifact versions decoupled from the wire version (copy); NDJSON-over-stdio and the stdout purity rule (copy); framing/batch semantics must be written into the first version of the spec (learning from ACP's batch crack).
