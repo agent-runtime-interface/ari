@@ -55,13 +55,23 @@ packages/adapter-dsh/     the first adapter: ARI ⇄ DeepSeek Harness (SDK JSON-
   src/dsh.ts              the DSH-side client (speaks the SDK wire as the client end)
   test/fake-dsh.ts        a DSH-wire test double, so the adapter is judged without an API key
   test/adapter.test.ts    24 end-to-end tests across real processes
+packages/adapter-codex/   the second adapter: ARI ⇄ Codex app-server (the v2 thread.* wire)
+  src/translate.ts        the pure Codex→ARI vocabulary mapping (three-level coordinates
+                          thread/turn/item collapse into ARI's envelope + payload fields)
+  src/adapter.ts          the translator core: notification gate, pending-input queue,
+                          approvals/questions over server→client requests, interrupt-based
+                          cancellation, fork, session list, and the replay ledger
+  src/codex.ts            the Codex-side client (answers the runtime's server→client requests)
+  test/fake-codex.ts      a Codex-wire test double (notification-before-response ordering,
+                          blocking approval/user-input requests), no API key needed
+  test/adapter.test.ts    31 end-to-end tests across real processes
 LICENSE                   Apache-2.0
 ```
 
 ## Running it
 
 ```bash
-npm test        # 78 tests: invariants, conformance teeth, Shell-side checks, and the DSH adapter
+npm test        # 109 tests: invariants, conformance teeth, Shell-side checks, both adapters
 npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
 
 # Drive any harness with the reference shell:
@@ -72,6 +82,9 @@ node packages/conformance/src/main.ts -- node path/to/my-harness.js
 
 # Drive DSH through its SDK wire with the same shell (no ARI code in DSH, none in the shell):
 node packages/shell/src/main.ts -- node packages/adapter-dsh/src/main.ts --dsh dsh --profile sdk
+
+# Drive the Codex app-server the same way:
+node packages/shell/src/main.ts -- node packages/adapter-codex/src/main.ts --codex codex app-server
 ```
 
 ### The shell
@@ -144,6 +157,16 @@ npm run conformance:dsh
 # C10/C20 skip because no prompt can reach an approval over this wire
 ```
 
+The Codex adapter, by contrast, can be driven into every path its wire offers —
+approvals and questions arrive as server→client requests, the adapter keeps a
+replay ledger, and `thread/fork` / `thread/list` back `session/fork` /
+`session/list` — so every probe can be supplied and nothing skips:
+
+```bash
+npm run conformance:codex
+# 24 passed, 0 failed, 0 skipped
+```
+
 ## How to read
 
 | Your goal | Suggested path |
@@ -169,7 +192,9 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **First adapter — done.** `packages/adapter-dsh/` drives a DeepSeek Harness runtime over its own SDK JSON-RPC wire and speaks ARI to the shell. The adapter is a translator, not a harness: it plays the ARI server toward the shell and the DSH client toward the runtime, renumbering `seq`/`turn`, attributing prompt receipts to turns (DSH's `turn/start` carries no message ids), holding DSH notifications until the prompt receipt precedes them on the wire (SPEC §7.9), and mapping DSH's process-closure cancellation idiom onto `session/cancel`. Its capability declaration is exactly what that wire can deliver — reasoning, usage, compaction events, subagents; no approvals, questions, or replay — and the conformance suite passes 18 checks with 6 honest skips. The shell, the adapter, and the shell test never needed to change for this; that is the claim ARI makes.
 
-**Next (in this repository)** — the remaining adapter layers (Codex app-server / ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. Codex app-server's three-level coordinate envelope (`thread_id`/`turn_id`/`item_id`) is the biggest envelope gap and the best stress test of the spec. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from.
+**Second adapter — done.** `packages/adapter-codex/` drives the Codex app-server over its v2 `thread.*` wire — the biggest envelope gap in the family, since every notification carries three-level coordinates (`thread_id`/`turn_id`/`item_id`). The coordinates collapse into ARI's envelope: thread ids *are* ARI session ids, adapter-assigned turns map the `turn_id` space, and `item_id` rides ARI's opaque `callId`. The wire's server→client requests (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/tool/requestUserInput`) become ARI `approval/*` and `question/*` events answered through the respond methods — the one-way interaction pattern holding against a bidirectional wire. Cancellation is `turn/interrupt` (the runtime survives, unlike DSH), `turn/start`'s steering behavior is deliberately not exposed (mid-turn prompts queue, SPEC §7.3), `thread/fork`/`thread/list` back `session/fork`/`session/list`, and `session/resume` is served from the adapter's per-session event ledger. The conformance suite passes **24/24 with zero skips** — the first target against which every probe could be supplied. The documented limits are the wire's own: no `refusal`/`max_tokens` stop reasons exist upstream, approval decisions are closed-enum (no input amending), and child-agent threads are surfaced as events, not attachable sessions.
+
+**Next (in this repository)** — the remaining adapter layers (ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from. Also worth a check: the Codex adapter's notification gate exists because a `turn/started` can race the `turn/start` response through the app-server's single outbound queue — a real-runtime smoke test would confirm the fake reproduces the races that matter.
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
@@ -195,4 +220,4 @@ ARI 1.0 is **10 request methods + 21 events + 1 handshake**, carried as newline-
 
 Every capability flag in `initialize` gates a defined surface — no dangling capabilities. ARI uses client→server requests and server→client notifications only, never server→client requests.
 
-Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH adapter exist; the remaining per-SDK adapters are next.
+Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH and Codex adapters exist; the remaining per-SDK adapters are next.
