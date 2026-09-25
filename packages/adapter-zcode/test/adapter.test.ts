@@ -311,10 +311,15 @@ test("a rejected sendText is an error for the prompt and the session stays usabl
   const started = await startWithSession();
   try {
     const { client, events, sessionId } = started;
+    // Warm the subscription up: a prompt racing the subscribe window is
+    // legitimately queued (SPEC §7.3), and a queued forward's failure is
+    // out-of-band (SPEC §8-I5) — the direct path is what answers -32603.
+    await client.prompt(sessionId, "warmup");
+    await waitFor(events, (list) => list.some((event) => event.type === "turn/completed"), "the warmup turn to settle");
     await expectError(() => client.prompt(sessionId, "failack"), -32603, "a guard-rejected sendText");
     await client.prompt(sessionId, "recovered");
-    await waitFor(events, (list) => list.some((event) => event.type === "turn/completed"), "the next turn to settle");
-    assert.equal(ofType(events, "turn/completed").length, 1, "no dangling turn events from the failed forward");
+    await waitFor(events, (list) => ofType(list, "turn/completed").length === 2, "the next turn to settle");
+    assert.equal(ofType(events, "turn/completed").length, 2, "no dangling turn events from the failed forward");
   } finally {
     started.close();
   }
