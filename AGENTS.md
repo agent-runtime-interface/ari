@@ -10,7 +10,10 @@ most recent handoff document and are not repeated here.
 
 Session handoffs live in `docs/handoff/` and are **committed to git**. They are
 this project's working memory across agent sessions, and git is the only place
-that memory survives cleanly: fresh clones, other machines, new sessions.
+that memory survives cleanly: fresh clones, other machines, new sessions. Start
+each new handoff from the fill-in skeleton at `docs/handoff/TEMPLATE.md`;
+the template itself is living infrastructure and the only file in that
+directory that may be edited after commit.
 
 Rules for every handoff document:
 
