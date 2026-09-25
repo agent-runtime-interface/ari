@@ -3,8 +3,16 @@
 Working conventions for AI agents (and humans) contributing to this repository.
 The hard project constraints — zero runtime dependencies, erasable TypeScript
 syntax only, `.ts` import extensions, English for code comments and commit
-messages, no history rewrites, no re-opening settled naming — are listed in the
-most recent handoff document and are not repeated here.
+messages, no re-opening settled naming — are listed in the most recent handoff
+document and are not repeated here.
+
+## Language
+
+All committed content is **English-only** (since 2026-09-25): the specification,
+README files, research report and evidence files, code comments, commit
+messages, and handoff documents. Do not introduce new non-English content, and
+do not translate older documents "back" — the migration is complete and its
+commits are part of history.
 
 ## Handoff documentation
 
@@ -32,6 +40,11 @@ Rules for every handoff document:
 3. When one handoff supersedes part of an older one, it says so explicitly;
    older documents are background, not live instructions.
 
-Note: handoffs published before 2026-09-25 predate rule 2 and contain local
-environment details; rule 2 applies from this date onward, and older documents
-are left as committed rather than rewritten.
+## Git history policy
+
+History was rewritten **once**, on 2026-09-25, before the project had any
+external clones, to sanitize content that violated the rules above (machine
+configuration details and private conversation in an early handoff). That was
+a one-time pre-adoption cleanup, not a standing permission: **the freeze is in
+force again.** Do not rewrite, rebase, or force-push public history from now
+on; fix anything objectionable in a forward commit instead.

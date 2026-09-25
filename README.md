@@ -1,5 +1,3 @@
-**English** · [中文](README.zh-CN.md)
-
 # ARI
 
 > ARI = **Agent Runtime Interface** — a runtime interface specification for coding-agent harnesses.
@@ -154,10 +152,6 @@ npm run conformance:dsh
 | Quickly judge whether this protocol is worth using | README (this page) → report Part B → SPEC §6 |
 | Check whether a given conclusion holds up | Follow the `[0x]` numbering into `research/`; every file has `path` + `symbol`-level citations |
 | Understand why some feature is "not done" | Report Part C4 / D7, plus SPEC §1.2 non-goals and §12 extension mechanism |
-
-### Language note
-
-The research report and the evidence files under research/ are written in Chinese. The normative specification is SPEC.md, which is in English.
 
 ## Methodology
 

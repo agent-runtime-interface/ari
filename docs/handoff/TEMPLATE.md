@@ -82,6 +82,5 @@ then list only what this session adds.
 
 ---
 
-Omit a section rather than write filler in it. Body language follows the
-session's working language; keep the headings exactly as above so handoffs
-stay greppable.
+Omit a section rather than write filler in it. The body is written in English
+(AGENTS.md); keep the headings exactly as above so handoffs stay greppable.
