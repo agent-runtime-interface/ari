@@ -14,13 +14,16 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "test": "node --test packages/ari/test/invariants.test.ts packages/conformance/test/teeth.test.ts packages/shell/test/shell.test.ts",
+    "test": "node --test packages/ari/test/invariants.test.ts packages/conformance/test/teeth.test.ts packages/shell/test/shell.test.ts packages/adapter-dsh/test/adapter.test.ts",
     "test:invariants": "node --test packages/ari/test/invariants.test.ts",
     "test:conformance": "node --test packages/conformance/test/teeth.test.ts",
     "test:shell": "node --test packages/shell/test/shell.test.ts",
+    "test:adapter-dsh": "node --test packages/adapter-dsh/test/adapter.test.ts",
     "mock": "node packages/mock-harness/src/main.ts",
     "shell": "node packages/shell/src/main.ts",
     "conformance": "node packages/conformance/src/main.ts",
+    "adapter:dsh": "node packages/adapter-dsh/src/main.ts",
+    "conformance:dsh": "node packages/conformance/src/main.ts --probe-slow \"slow 8000\" --probe-error fail --queue-limit 3 -- node packages/adapter-dsh/src/main.ts --queue-limit 3 --dsh node packages/adapter-dsh/test/fake-dsh.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

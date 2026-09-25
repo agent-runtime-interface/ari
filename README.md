@@ -50,13 +50,20 @@ packages/conformance/     the Appendix A checklist as a CLI, runnable against an
   test/broken-harness.ts  a deliberately non-conformant harness, to prove the suite has teeth
 packages/shell/           the reference shell: drives any harness, knows none of them
   test/shell.test.ts      Appendix A items 23–25 (Shell-side) plus a CLI smoke test
+packages/adapter-dsh/     the first adapter: ARI ⇄ DeepSeek Harness (SDK JSON-RPC wire)
+  src/translate.ts        the pure DSH→ARI vocabulary mapping (envelope changes, semantics do not)
+  src/adapter.ts          the translator core: seq/turn renumbering, receipt attribution,
+                          the notification gate, cancellation by process replacement
+  src/dsh.ts              the DSH-side client (speaks the SDK wire as the client end)
+  test/fake-dsh.ts        a DSH-wire test double, so the adapter is judged without an API key
+  test/adapter.test.ts    24 end-to-end tests across real processes
 LICENSE                   Apache-2.0
 ```
 
 ## Running it
 
 ```bash
-npm test        # 54 tests: invariants, conformance teeth, and Shell-side checks
+npm test        # 78 tests: invariants, conformance teeth, Shell-side checks, and the DSH adapter
 npm run mock    # the mock harness, speaking ARI 1.0 on stdin/stdout
 
 # Drive any harness with the reference shell:
@@ -64,6 +71,9 @@ node packages/shell/src/main.ts -- node path/to/my-harness.js
 
 # Check any harness against the Appendix A checklist:
 node packages/conformance/src/main.ts -- node path/to/my-harness.js
+
+# Drive DSH through its SDK wire with the same shell (no ARI code in DSH, none in the shell):
+node packages/shell/src/main.ts -- node packages/adapter-dsh/src/main.ts --dsh dsh --profile sdk
 ```
 
 ### The shell
@@ -124,6 +134,18 @@ suite could not provoke. Items 23–25 of Appendix A are Shell-side and therefor
 out of scope for a harness-facing tool; `packages/ari/test` covers them for the
 reference client.
 
+The same suite judges the DSH adapter (driving its DSH-wire fake), where the
+skips are themselves the finding: no approval/question/replay probe can be
+supplied because the DSH SDK wire has no such channel, which is exactly what the
+adapter's capability declaration says:
+
+```bash
+npm run conformance:dsh
+# 18 passed, 0 failed, 6 skipped —
+# C11/C18/C19/C24 skip on declared-false capabilities,
+# C10/C20 skip because no prompt can reach an approval over this wire
+```
+
 ## How to read
 
 | Your goal | Suggested path |
@@ -151,7 +173,9 @@ Known limitations (e.g. ZCode's protocol describing itself as "not frozen", no b
 
 **Reference implementation — in progress.** `packages/ari/` is the protocol library: protocol types, error codes, NDJSON framing with the 1 MiB cap and write backpressure, the Shell-side client, and a Harness-side helper that enforces the settlement invariants structurally rather than by convention. `packages/mock-harness/` is a minimal, deterministic harness built on that helper. `packages/conformance/` turns the Appendix A checklist into a CLI that runs against **any** harness command, and `packages/conformance/test/broken-harness.ts` is a deliberately non-conformant harness used to prove the suite detects violations rather than passing everything. `packages/shell/` is the reference shell, which drives the mock harness with no harness-specific code in it.
 
-**Next (in this repository)** — adapter layers for each agent SDK (DSH / Codex / ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from.
+**First adapter — done.** `packages/adapter-dsh/` drives a DeepSeek Harness runtime over its own SDK JSON-RPC wire and speaks ARI to the shell. The adapter is a translator, not a harness: it plays the ARI server toward the shell and the DSH client toward the runtime, renumbering `seq`/`turn`, attributing prompt receipts to turns (DSH's `turn/start` carries no message ids), holding DSH notifications until the prompt receipt precedes them on the wire (SPEC §7.9), and mapping DSH's process-closure cancellation idiom onto `session/cancel`. Its capability declaration is exactly what that wire can deliver — reasoning, usage, compaction events, subagents; no approvals, questions, or replay — and the conformance suite passes 18 checks with 6 honest skips. The shell, the adapter, and the shell test never needed to change for this; that is the claim ARI makes.
+
+**Next (in this repository)** — the remaining adapter layers (Codex app-server / ZCode / OpenCode / Pi / ACP), so the shell can drive real runtimes. Codex app-server's three-level coordinate envelope (`thread_id`/`turn_id`/`item_id`) is the biggest envelope gap and the best stress test of the spec. The adaptation principle is **change the envelope, not the semantics**: a harness's internal compaction algorithm, PTC, tool pipeline, and storage format do not change just because it adapts to ARI. SPEC Appendix B is the mapping table to work from.
 
 **Explicitly out of scope** — tool-body standardization (left to MCP), reversing client tools (ACP v2 removed that surface), PTC events, compaction control, PTY pass-through, subagent orchestration API, background-task control API. These go through the `x-` extension mechanism in §12 and **do not consume version numbers**.
 
@@ -177,4 +201,4 @@ ARI 1.0 is **10 request methods + 21 events + 1 handshake**, carried as newline-
 
 Every capability flag in `initialize` gates a defined surface — no dangling capabilities. ARI uses client→server requests and server→client notifications only, never server→client requests.
 
-Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library exists; the mock harness, conformance suite, reference shell, and per-SDK adapters are next.
+Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH adapter exist; the remaining per-SDK adapters are next.

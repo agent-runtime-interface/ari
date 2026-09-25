@@ -11,7 +11,7 @@ import { EVENT_CAPABILITY, type AriEvent } from "../../ari/src/index.ts";
 
 export type Rendered =
   /** Append to the current line without breaking it (streaming text). */
-  | { kind: "stream"; text: string; stream: "message" | "reasoning" }
+  | { kind: "stream"; text: string; stream: "message" | "reasoning" | "tool" }
   /** A complete line of its own. */
   | { kind: "line"; text: string }
   /** Nothing worth showing. */
@@ -76,7 +76,7 @@ export function renderEvent(event: AriEvent, options: RenderOptions = DEFAULT_RE
     case "tool/updated": {
       const delta = payload["outputDelta"];
       const title = payload["title"];
-      if (delta !== undefined) return { kind: "stream", text: String(delta) };
+      if (delta !== undefined) return { kind: "stream", text: String(delta), stream: "tool" };
       if (title !== undefined) return line(`  ⚙ ${String(title)}`);
       return none;
     }
@@ -140,8 +140,10 @@ export function renderEvent(event: AriEvent, options: RenderOptions = DEFAULT_RE
 
     default: {
       // Unknown event types must be ignored, not fatal (Appendix A item 23).
-      // A vendor `x-` extension is worth showing; anything else is noise.
-      if (event.type.startsWith("x-")) return line(`  · [${event.type}]`);
+      // The switch above covers every type the union knows; this branch only
+      // runs for types that arrive on the wire before the types do.
+      const type = (event as { type?: string }).type ?? "";
+      if (type.startsWith("x-")) return line(`  · [${type}]`);
       void EVENT_CAPABILITY;
       return none;
     }

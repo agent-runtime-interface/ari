@@ -1,0 +1,14 @@
+{
+  "name": "@ari/adapter-dsh",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ARI 1.0 adapter for the DeepSeek Harness SDK runtime: translates ARI to DSH's JSON-RPC stdio wire and back.",
+  "license": "Apache-2.0",
+  "bin": {
+    "ari-adapter-dsh": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  }
+}

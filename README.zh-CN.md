@@ -50,13 +50,20 @@ packages/conformance/     把附录 A 清单做成 CLI，可对任意 harness �
   test/broken-harness.ts  一个故意违规的 harness，用来证明套件有牙齿
 packages/shell/           参考壳：能驱动任意 harness，却不认识任何一个
   test/shell.test.ts      附录 A 第 23–25 条（Shell 侧）+ CLI 冒烟测试
+packages/adapter-dsh/     第一个适配层：ARI ⇄ DeepSeek Harness（SDK JSON-RPC 线协议）
+  src/translate.ts        纯 DSH→ARI 词汇映射（改信封，不改语义）
+  src/adapter.ts          翻译核心：seq/turn 重编号、回执归属、通知闸门、
+                          以进程替换实现的取消
+  src/dsh.ts              DSH 侧客户端（作为 client 端说 DSH 的线协议）
+  test/fake-dsh.ts        DSH 线协议测试替身，无需 API key 即可被 conformance 判定
+  test/adapter.test.ts    24 个真实跨进程的端到端测试
 LICENSE                   Apache-2.0
 ```
 
 ## 怎么跑
 
 ```bash
-npm test        # 54 个测试：不变量、conformance 的牙齿、Shell 侧检查
+npm test        # 78 个测试：不变量、conformance 的牙齿、Shell 侧检查、DSH 适配层
 npm run mock    # mock harness，在 stdin/stdout 上说 ARI 1.0
 
 # 用参考壳驱动任意 harness：
@@ -64,6 +71,9 @@ node packages/shell/src/main.ts -- node path/to/my-harness.js
 
 # 用附录 A 清单检查任意 harness：
 node packages/conformance/src/main.ts -- node path/to/my-harness.js
+
+# 用同一个壳驱动 DSH（DSH 里没有一行 ARI，壳里没有一行 DSH）：
+node packages/shell/src/main.ts -- node packages/adapter-dsh/src/main.ts --dsh dsh --profile sdk
 ```
 
 ### 壳
@@ -108,6 +118,15 @@ node packages/conformance/src/main.ts \
 
 没提供探针的检查会报 **SKIP 并说明该加哪个参数**——既不会静默通过，也不会因为"套件没法触发"而误判失败。附录 A 的第 23–25 条属于 Shell 侧，对 harness 面向的工具不在范围内；`packages/ari/test` 已为参考客户端覆盖了它们。
 
+同一套套件也判定 DSH 适配层（驱动它的 DSH 线协议替身），而那里的 SKIP 本身就是结论：审批/提问/replay 的探针**给不出来**，因为 DSH 的 SDK 线协议根本没有这些通道——这正是适配层能力声明所如实反映的：
+
+```bash
+npm run conformance:dsh
+# 18 passed, 0 failed, 6 skipped ——
+# C11/C18/C19/C24 因声明为 false 的能力而跳过，
+# C10/C20 因这条线上不存在能触发审批的 prompt 而跳过
+```
+
 ## 怎么读
 
 | 你的目的 | 建议路径 |
@@ -131,7 +150,9 @@ DSH (DeepSeek Harness) · ZCode · Codex CLI (codex-rs) · OpenCode · Pi (badlo
 
 **参考实现进行中**——`packages/ari/` 是协议库：协议类型、错误码、NDJSON 分帧（含 1 MiB 上限与写入背压）、Shell 侧客户端，以及一个把结算不变量做成**结构性保证**（而非靠约定）的 Harness 侧助手。`packages/mock-harness/` 是基于该助手写的最小确定性 harness。`packages/conformance/` 把附录 A 清单做成可对**任意 harness 命令**运行的 CLI，其中 `test/broken-harness.ts` 是一个故意违规的 harness，用来证明套件确实抓得住违规而不是一律通过。`packages/shell/` 是参考壳，它能驱动 mock harness 且内部没有任何 harness 专有代码。
 
-**下一步（本仓库内）**——各 Agent SDK 的适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP），让壳能驱动真实 runtime。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。SPEC 附录 B 就是工作清单。
+**第一个适配层已完成**——`packages/adapter-dsh/` 通过 DSH 自己的 SDK JSON-RPC 线协议驱动 DeepSeek Harness 运行时，对壳说 ARI。适配层是**翻译器**而非 harness：对壳扮演 ARI server，对运行时扮演 DSH client。它负责：`seq`/`turn` 重编号（DSH 的 turn 计数在进程重建后会归零）、prompt 回执归属（DSH 的 `turn/start` 不带 messageIds）、通知闸门（DSH 在 `session/prompt` 里同步追加 `turn/start`，通知会先于回执到达，而 SPEC §7.9 禁止这个顺序）、以及把 DSH「关进程即取消」的习惯用法映射到 `session/cancel`。能力声明与这条线真正能交付的完全一致——reasoning、usage、compaction 事件、subagents 有；审批、提问、replay 没有。conformance 通过 18 项，6 项 SKIP 全部有因。为做这件事，壳、协议库、conformance 一行都没改——这正是 ARI 想要证明的主张。
+
+**下一步（本仓库内）**——其余适配层（Codex app-server / ZCode / OpenCode / Pi / ACP）。Codex app-server 的三级坐标信封（`thread_id`/`turn_id`/`item_id`）信封差异最大，最能压测规范。适配原则是**改信封、不改语义**：Harness 内部的 compaction 算法、PTC、工具管线、存储格式不因适配 ARI 而改变。SPEC 附录 B 就是工作清单。
 
 **明确不做**——工具体标准化（交给 MCP）、client tools 反转（ACP v2 已删除该面）、PTC 事件、compaction 控制、PTY 透传、子 agent 编排 API、后台任务控制 API。这些走 §12 的 `x-` 扩展机制，**不占版本号**。
 
@@ -157,4 +178,4 @@ ARI 1.0 is **10 request methods + 21 events + 1 handshake**, carried as newline-
 
 Every capability flag in `initialize` gates a defined surface — no dangling capabilities. ARI uses client→server requests and server→client notifications only, never server→client requests.
 
-Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). A reference shell and per-SDK adapters are next; no reference implementation exists yet.
+Every load-bearing claim in the report is cited at file-path + symbol level against real implementations (DSH, ZCode, Codex CLI, OpenCode, Pi, ACP, Codex App Server, Claude Code, Gemini CLI). The protocol library, the mock harness, the conformance suite, the reference shell, and the DSH adapter exist; the remaining per-SDK adapters are next.

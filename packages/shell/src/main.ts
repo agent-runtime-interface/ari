@@ -113,7 +113,7 @@ function parseArgs(argv: readonly string[]): Options {
 // ── output ──────────────────────────────────────────────────────────────
 
 let midLine = false;
-let currentStream: "message" | "reasoning" | undefined;
+let currentStream: "message" | "reasoning" | "tool" | undefined;
 
 function write(text: string): void {
   process.stdout.write(text);
