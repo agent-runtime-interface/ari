@@ -1,52 +1,54 @@
-# ARI 交接文档
+# ARI Handoff
 
-> 面向**下一位接手的 AI Agent**。你无法访问之前的会话，只有这份文档。
-> 生成时间：2026-09-24 23:11 · 工作目录：仓库根目录
+> Addressed to **the next AI agent taking over this work**. You have no access to the previous sessions; this document is all you have.
+> Generated: 2026-09-24 23:11 · Working directory: the repository root
 
----
-
-## 0. 三十秒速览
-
-**ARI (Agent Runtime Interface)** 是一套让「一个壳（Shell）驱动任意 Coding Agent Harness」的运行时协议。仓库同时是规范 + 参考实现 + conformance 套件，已开源在 **https://github.com/agent-runtime-interface/ari**（public）。
-
-**当前进度**：规范（ARI 1.0）完成 · 协议库完成 · mock harness 完成 · conformance 套件完成（24 条检查）· 参考壳完成 · **54 个测试全绿**。
-**下一步**：6 个适配层（DSH / Codex / ZCode / OpenCode / Pi / ACP），建议从 `adapter-dsh` 开始。
-
-技术栈：**TypeScript，零依赖**，Node ≥ 22.6 原生 type stripping，直接 `node xxx.ts` 跑，不需要 `npm install`、不需要构建。
+> Translated from the Chinese original during the 2026-09-25 English-only migration; machine-specific details were sanitized per AGENTS.md.
 
 ---
 
-## 1. 当前任务目标
+## 0. Thirty-Second Overview
 
-### 要解决的问题
+**ARI (Agent Runtime Interface)** is a runtime protocol that lets **one shell drive any coding-agent harness**. The repository is simultaneously spec + reference implementation + conformance suite, and is open-sourced at **https://github.com/agent-runtime-interface/ari** (public).
 
-今天一个 Shell（IDE 插件、TUI、Web UI、自动化脚本）想驱动不同的 agent runtime，必须为每一家写一套适配器：DSH 有 SDK JSON-RPC、Codex 有 app-server、ZCode 有 Protocol V4、OpenCode 是 HTTP+SSE、Pi 是 RPC——方法名、事件名、完成语义、审批形状全不一样。
+**Current progress**: spec (ARI 1.0) done · protocol library done · mock harness done · conformance suite done (24 checks) · reference shell done · **all 54 tests green**.
+**Next step**: the 6 adapter layers (DSH / Codex / ZCode / OpenCode / Pi / ACP), with `adapter-dsh` as the recommended starting point.
 
-ARI 的主张：**这些 runtime 内部共享同一套运行时抽象**，值得标准化一次。
+Tech stack: **TypeScript, zero dependencies**, Node ≥ 22.6 native type stripping — run directly with `node xxx.ts`; no `npm install`, no build step.
 
-### 预期产出
+---
 
-| 产出 | 状态 |
+## 1. Current Task Objectives
+
+### The problem being solved
+
+Today, a shell (IDE plugin, TUI, Web UI, automation script) that wants to drive different agent runtimes must write a dedicated adapter for each one: DSH has an SDK JSON-RPC, Codex has app-server, ZCode has Protocol V4, OpenCode is HTTP+SSE, Pi is RPC — method names, event names, completion semantics, and approval shapes all differ.
+
+ARI's thesis: **these runtimes share the same runtime abstractions internally**, and that common ground is worth standardizing once.
+
+### Expected deliverables
+
+| Deliverable | Status |
 |---|---|
-| 规范性规范 `SPEC.md` | ✅ 完成（ARI 1.0，英文） |
-| 参考协议库 `packages/ari` | ✅ 完成 |
-| 参考 harness `packages/mock-harness` | ✅ 完成 |
-| conformance 套件 `packages/conformance` | ✅ 完成 |
-| 参考壳 `packages/shell` | ✅ **完成**（2026-09-24 23:2x，见 §2 末尾） |
-| **6 个适配层**（DSH/Codex/ZCode/OpenCode/Pi/ACP） | ❌ **未开始 ← 下一步** |
-| 第三方独立实现的 harness 通过 conformance | ❌ 未发生 |
+| Normative spec `SPEC.md` | ✅ Done (ARI 1.0, English) |
+| Reference protocol library `packages/ari` | ✅ Done |
+| Reference harness `packages/mock-harness` | ✅ Done |
+| Conformance suite `packages/conformance` | ✅ Done |
+| Reference shell `packages/shell` | ✅ **Done** (2026-09-24 23:2x, see the end of §2) |
+| **6 adapter layers** (DSH/Codex/ZCode/OpenCode/Pi/ACP) | ❌ **Not started ← next step** |
+| A third-party, independently implemented harness passing conformance | ❌ Has not happened |
 
-### 完成标准
+### Definition of done
 
-- 一个壳能通过 ARI 驱动多个真实 harness，且**代码里不出现任何 harness 专有分支**
-- 每个适配层通过 `packages/conformance`（附录 A 的 22 条 harness 侧检查）
-- 理想终局：**某个不是我们写的 harness 通过 conformance**——这是"规范可被第三方独立实现"的唯一硬证据
+- One shell can drive multiple real harnesses through ARI with **zero harness-specific branches anywhere in its code**
+- Each adapter layer passes `packages/conformance` (the 22 harness-side checks of Appendix A)
+- Ideal endgame: **some harness we did not write passes conformance** — the only hard evidence that "the spec can be independently implemented by a third party"
 
 ---
 
-## 2. 当前进展
+## 2. Current Progress
 
-### 提交历史（9 个，全部已推送，`main` 与 `origin/main` 同步）
+### Commit history (9 commits, all pushed; `main` in sync with `origin/main`)
 
 ```
 53c4c8c  Add the conformance suite, and prove it detects violations
@@ -60,315 +62,315 @@ f050ab3  Make ARI the project name (not an initialism); remove local absolute pa
 75fe305  ARI: cross-harness runtime protocol research and proposal
 ```
 
-### 文档
+### Documentation
 
-| 文件 | 语言 | 说明 |
+| File | Language | Notes |
 |---|---|---|
-| `SPEC.md` | **英文** | **规范性**。ARI 1.0。§0–§13 + 附录 A/B/C |
-| `README.md` | 英文 | 仓库门面 |
-| `README.zh-CN.md` | 中文 | 与英文版内容同步 |
-| `ARI-RESEARCH-REPORT.md` | 中文 | 调研报告（Part A 调查 / B 共同抽象 / C 取舍 / D 推导 / E 示例） |
-| `research/01-dsh.md` … `08-related.md` + `capability-matrix.md` | 中文 | 9 份源码级证据，带 `path` + `symbol` 引用 |
+| `SPEC.md` | **English** | **Normative**. ARI 1.0. §0–§13 + Appendices A/B/C |
+| `README.md` | English | Repository front page |
+| `README.zh-CN.md` | Chinese | Content kept in sync with the English version |
+| `ARI-RESEARCH-REPORT.md` | Chinese | Research report (Part A survey / B shared abstractions / C trade-offs / D derivation / E examples) |
+| `research/01-dsh.md` … `08-related.md` + `capability-matrix.md` | Chinese | 9 source-level evidence documents with `path` + `symbol` citations |
 
-> **重要**：报告与 `research/` **故意保持中文**，这是深思后的决定（见 §3）。SPEC 是英文且为唯一规范来源；两者冲突以 SPEC 为准。
+> **Important**: the report and `research/` **intentionally remain in Chinese** — a deliberate, considered decision (see §3). The SPEC is in English and is the single source of truth; where the two conflict, the SPEC wins.
 
-### 代码（`packages/`）
+### Code (`packages/`)
 
 ```
-packages/ari/src/types.ts        379 行  协议类型、11 个能力键、21 种事件联合、方法表
-packages/ari/src/errors.ts        88 行  错误码 -32001…-32008 + JSON-RPC 标准码
-packages/ari/src/jsonrpc.ts      108 行  JSON-RPC 2.0 判定、event 通知识别
-packages/ari/src/framing.ts      155 行  NDJSON 分帧、1 MiB 上限、背压写入器、readFramesSafe
-packages/ari/src/client.ts       528 行  Shell 侧客户端
-packages/ari/src/harness.ts     1172 行  Harness 侧助手（不变量强制）★核心
-packages/ari/src/index.ts         19 行  入口，27 个导出
+packages/ari/src/types.ts        379 lines  protocol types, 11 capability keys, 21-event union, method table
+packages/ari/src/errors.ts        88 lines  error codes -32001…-32008 + JSON-RPC standard codes
+packages/ari/src/jsonrpc.ts      108 lines  JSON-RPC 2.0 detection, event notification recognition
+packages/ari/src/framing.ts      155 lines  NDJSON framing, 1 MiB cap, backpressure writer, readFramesSafe
+packages/ari/src/client.ts       528 lines  shell-side client
+packages/ari/src/harness.ts     1172 lines  harness-side helper (invariant enforcement) ★core
+packages/ari/src/index.ts         19 lines  entry point, 27 exports
 
-packages/ari/test/invariants.test.ts      709 行  29 个不变量测试
-packages/mock-harness/src/main.ts         339 行  关键词驱动的确定性 harness
-packages/conformance/src/checks.ts        742 行  24 条检查
-packages/conformance/src/main.ts          335 行  CLI
-packages/conformance/test/broken-harness.ts 151 行  故意违规的 harness
-packages/conformance/test/teeth.test.ts     129 行  12 个"套件抓得住违规"的测试
+packages/ari/test/invariants.test.ts      709 lines  29 invariant tests
+packages/mock-harness/src/main.ts         339 lines  keyword-driven deterministic harness
+packages/conformance/src/checks.ts        742 lines  24 checks
+packages/conformance/src/main.ts          335 lines  CLI
+packages/conformance/test/broken-harness.ts 151 lines  deliberately violating harness
+packages/conformance/test/teeth.test.ts     129 lines  12 tests proving "the suite catches violations"
 ```
 
-### 测试现状
+### Test status
 
 ```
 $ npm test
 ℹ tests 54   ℹ pass 54   ℹ fail 0
 ```
 
-- `packages/ari/test/invariants.test.ts` — 29 个（真 harness 经真客户端驱动）
-- `packages/conformance/test/teeth.test.ts` — 12 个（含 9 种故意违规的检出证明）
-- `packages/shell/test/shell.test.ts` — 12 个（附录 A 第 23–25 条 + CLI 冒烟）
+- `packages/ari/test/invariants.test.ts` — 29 (a real harness driven through the real client)
+- `packages/conformance/test/teeth.test.ts` — 12 (including proof that 9 kinds of deliberate violations are detected)
+- `packages/shell/test/shell.test.ts` — 12 (Appendix A checks 23–25 + CLI smoke tests)
 
-### 命令
+### Commands
 
 ```bash
-npm test                      # 54 个测试
-npm run test:invariants       # 只跑不变量测试
-npm run test:conformance      # 只跑"牙齿"测试
-npm run mock                  # 起 mock harness（在 stdin/stdout 上说 ARI 1.0）
-npm run conformance -- -- node packages/mock-harness/src/main.ts   # 跑 conformance
-npm run typecheck             # ⚠️ 从未成功跑过，见 §5
+npm test                      # 54 tests
+npm run test:invariants       # run only the invariant tests
+npm run test:conformance      # run only the "teeth" tests
+npm run mock                  # start the mock harness (speaks ARI 1.0 on stdin/stdout)
+npm run conformance -- -- node packages/mock-harness/src/main.ts   # run conformance
+npm run typecheck             # ⚠️ has never run successfully, see §5
 ```
 
 ---
 
-## 3. 关键上下文
+## 3. Key Context
 
-### 用户的明确要求（按时间顺序，均为原话意图）
+### The user's explicit requests (chronological order; paraphrased intent)
 
-1. **开源**：仓库要公开。已完成（public）。
-2. **不要版本戏**：（用户要求：直接定为 1.0，不要版本戏）→ 已全面改为 **ARI 1.0**，不再有 v0.1/v0.2 措辞。
-3. **国际化**：（用户要求：国际化——规范、README、代码注释与提交信息一律英文）→ **规范/README/代码注释/提交信息一律英文**；**调研报告与 research/ 保持中文**（用户接受了这个折中：规范 590 行 vs 报告 2500 行，收益/成本比决定）。
-4. **组织与命名**：最终选定组织 **`agent-runtime-interface`**，仓库名 **`ari`**。曾长期纠结 `agentruntimeinterface`（无连字符，MCP 风格）vs `agent-runtime-interface`（可读性好），**用户最终选了带连字符的**。**不要再重新讨论命名**。
-5. **下一步**：（用户确认：接下来要做壳与各 SDK 适配层）——已明确技术栈选 **TypeScript**，顺序选**先做壳 + conformance**（conformance 已完成）。
-6. **历史改英文**：已完成（`git filter-branch` 重写 4 条中文提交信息，树对象逐一校验未变，旧对象已 `gc --prune=now` 回收）。
+1. **Open source**: the repository must be public. Done (public).
+2. **No version theatre**: the user asked to go straight to 1.0 with no version theatre → everything became **ARI 1.0**; no more v0.1/v0.2 wording anywhere.
+3. **Internationalization**: the user asked for internationalization — spec, README, comments and commit messages in English → **spec / README / code comments / commit messages all in English**; **the research report and `research/` remain in Chinese** (the user accepted this trade-off: a 590-line spec vs a 2500-line report — decided on the benefit/cost ratio).
+4. **Organization and naming**: final choice: organization **`agent-runtime-interface`**, repository **`ari`**. There was prolonged deliberation between `agentruntimeinterface` (no hyphen, MCP style) and `agent-runtime-interface` (more readable); **the user ultimately chose the hyphenated form**. **Do not reopen the naming discussion.**
+5. **Next step**: the user confirmed the next step is a shell plus per-SDK adapter layers — the tech stack was settled as **TypeScript**, and the order as **shell + conformance first** (conformance is already done).
+6. **History converted to English**: done (`git filter-branch` rewrote the 4 Chinese commit messages; tree objects were verified unchanged one by one; the old objects were reclaimed with `gc --prune=now`).
 
-### 硬约束（违反会破坏已建立的性质）
+### Hard constraints (violating any of them breaks an established property)
 
-| 约束 | 原因 |
+| Constraint | Reason |
 |---|---|
-| **零依赖** | 参考实现能 `node xxx.ts` 直接跑是特性。不要引入任何 runtime 依赖 |
-| **只用可擦除语法** | Node 原生 type stripping 不支持 `enum`、`namespace`、构造器参数属性。用 `const` 对象 + 联合类型代替 enum。`tsconfig.json` 开了 `erasableSyntaxOnly: true` |
-| **import 必须带 `.ts` 扩展名** | `import { x } from "./y.ts"`。已开 `allowImportingTsExtensions` |
-| **代码注释、提交信息一律英文** | 用户明确要求国际化 |
-| **不要重写 git 历史** | 仓库已公开推送。要改就得 force-push 公开历史 |
-| **不要翻译 `research/` 与 `ARI-RESEARCH-REPORT.md`** | 有意保留中文 |
+| **Zero dependencies** | The reference implementation running directly via `node xxx.ts` is a feature. Do not introduce any runtime dependency |
+| **Erasable syntax only** | Node's native type stripping does not support `enum`, `namespace`, or constructor parameter properties. Use `const` objects + union types instead of enums. `tsconfig.json` sets `erasableSyntaxOnly: true` |
+| **Imports must carry the `.ts` extension** | `import { x } from "./y.ts"`. `allowImportingTsExtensions` is enabled |
+| **Code comments and commit messages in English** | The user explicitly requested internationalization |
+| **Do not rewrite git history** | The repository has been pushed publicly; changing it would mean force-pushing public history |
+| **Do not translate `research/` or `ARI-RESEARCH-REPORT.md`** | Intentionally kept in Chinese |
 
-### 已做出的关键设计决定（不要重新推翻）
+### Key design decisions already made (do not overturn them)
 
-1. **ARI = Agent Runtime Interface**（缩写成立，避开了 ARP→Address Resolution Protocol 的致命碰撞）。
-2. **不使用 server→client 请求**。ARI 只有两种消息：client→server 请求、server→client 通知。人机交互走「事件 + respond 方法」，壳不需要请求路由器。这是对 ACP 的实质偏离。
-3. **prompt 回执 ≠ turn 结局**。`session/prompt` 的 `messageId` 严格只承诺「**已持久入队**」。turn 结算由 `turn/completed` 承载。
-4. **`session/error` 永不替代 `turn/completed`**。前者是带外诊断，后者是唯一收尾。
-5. **能力位不得悬空**。`initialize` 里声明为 `true` 的每个能力，都必须在 1.0 内有定义的方法/事件。这是当初把 subagent/background/fork/sessionList 从「v0.2」提升进 1.0 的原因。
-6. **未协议化的能力走扩展机制**（§12）：`x-` 前缀方法/事件 + `_meta`，**不占版本号**。包括 steer、PTY 透传、PTC、execpolicy 修正、编排/控制 API。
-7. **ARI 是接口规范，协议绑定规定传输**（SPEC §1.1）。Binding A（JSON-RPC 2.0 / NDJSON）为规范性，Binding B（HTTP+SSE）为信息性。
+1. **ARI = Agent Runtime Interface** (the initialism holds, and it avoids the fatal collision with ARP → Address Resolution Protocol).
+2. **No server→client requests.** ARI has only two message kinds: client→server requests and server→client notifications. Human-in-the-loop interactions go through "events + respond methods"; the shell needs no request router. This is a substantive departure from ACP.
+3. **A prompt receipt ≠ the turn outcome.** The `messageId` of `session/prompt` strictly promises only "**durably enqueued**". Turn settlement is carried by `turn/completed`.
+4. **`session/error` never replaces `turn/completed`.** The former is out-of-band diagnostics; the latter is the only closing event.
+5. **Capability bits must not dangle.** Every capability declared `true` in `initialize` must have a defined method/event within 1.0. That is why subagent/background/fork/sessionList were promoted from "v0.2" into 1.0.
+6. **Capabilities not yet protocolized go through the extension mechanism** (§12): `x-`-prefixed methods/events + `_meta`, **consuming no version number**. This includes steer, PTY passthrough, PTC, execpolicy corrections, and orchestration/control APIs.
+7. **ARI is an interface specification; protocol bindings define the transport** (SPEC §1.1). Binding A (JSON-RPC 2.0 / NDJSON) is normative; Binding B (HTTP+SSE) is informative.
 
-### 关键数字（改代码前先确认）
+### Key numbers (verify before touching code)
 
-- **10 个请求方法**：`initialize`、`session/new`、`session/resume`、`session/prompt`、`session/cancel`、`session/fork`、`session/list`、`shutdown`、`approval/respond`、`question/respond`（+ `initialized` 通知 + `event` 通道）
-- **21 种事件** = 10 必需 + 11 能力门控
-- **11 个能力键**：`reasoning`、`question`、`approvalEditInput`、`usage`、`compactionEvents`、`replay`、`fileChanges`、`subagents`、`backgroundTasks`、`fork`、`sessionList`
-- **13 个错误码**：`-32700`…`-32603`（JSON-RPC 标准）+ `-32001`…`-32008`（ARI 自有）
-- `seq` 与 `turn` 均**从 1 起**；单帧上限 **1 MiB = 1,048,576 字节**
-- conformance：附录 A **22 条 harness 侧 + 3 条 shell 侧**
+- **10 request methods**: `initialize`, `session/new`, `session/resume`, `session/prompt`, `session/cancel`, `session/fork`, `session/list`, `shutdown`, `approval/respond`, `question/respond` (+ the `initialized` notification + the `event` channel)
+- **21 event types** = 10 required + 11 capability-gated
+- **11 capability keys**: `reasoning`, `question`, `approvalEditInput`, `usage`, `compactionEvents`, `replay`, `fileChanges`, `subagents`, `backgroundTasks`, `fork`, `sessionList`
+- **13 error codes**: `-32700`…`-32603` (JSON-RPC standard) + `-32001`…`-32008` (ARI's own)
+- `seq` and `turn` both **start at 1**; the single-frame cap is **1 MiB = 1,048,576 bytes**
+- conformance: Appendix A has **22 harness-side + 3 shell-side** checks
 
-### 环境事实
+### Environment facts
 
-- Node **v25.4.0**、pnpm 12.4.2、npm 11.7.0
-- **remote 用的是本地 SSH 别名**（配置细节按仓库内容规范省略）。他人克隆请使用 `https://github.com/agent-runtime-interface/ari.git`，文档中引用仓库地址一律写该 HTTPS URL
-- 工作目录里有**未跟踪的第三方克隆**：`codex/`、`opencode/`、`ZCode/`、符号链接 `deepseek-harness`。**全部在 `.gitignore` 里**，是调研用的上游源码，不要提交、不要删
+- Node **v25.4.0**, pnpm 12.4.2, npm 11.7.0
+- The configured remote uses a local SSH alias (details deliberately omitted per the repository's content policy). Anyone cloning should use https://github.com/agent-runtime-interface/ari.git — and that is the URL documentation should cite.
+- The working directory contains **untracked third-party checkouts**: `codex/`, `opencode/`, `ZCode/`, and a symlink `deepseek-harness`. **All are in `.gitignore`** — upstream source checkouts used for research. Do not commit them; do not delete them.
 
 ---
 
-## 4. 关键发现
+## 4. Key Findings
 
-### 4.1 `harness.ts` 的价值在于"让违规做不到"
+### 4.1 The value of `harness.ts` is making violations impossible
 
-`AriHarness` 把 SPEC §8 的不变量做成了**结构性保证**，而不是文档里的自觉：
+`AriHarness` turns the invariants of SPEC §8 into **structural guarantees**, not into self-discipline left to documentation:
 
-| 不变量 | 机制 |
+| Invariant | Mechanism |
 |---|---|
-| seq 无空洞 | **seq 由 helper 自己分配**，harness 作者没有写 seq 的机会 |
-| 能力为 false 就发不出事件 | 门控在 `#emit` 内部查 `EVENT_CAPABILITY`，命中即抛 `AriInvariantError` |
-| 每个 `turn/started` 恰好一条 `turn/completed` | 只有**一个** open-turn 槽位，`#settleTurn` 是唯一出口，重复结算直接抛 |
-| 每个 `*/requested` 恰好一条 `*/resolved` | 结算时自动清算该 turn 的挂起交互（`cancelled`/`expired`） |
-| 工具不悬空 | 结算前自动补发 `tool/completed{status:"error"}`，**在** `turn/completed` 之前 |
-| 结算后不再有事件 | `ctx` 在 turn 结算后即"死亡"，任何 emit 抛错 |
+| No gaps in seq | **seq is allocated by the helper itself**; the harness author never gets a chance to write a seq |
+| No events for capabilities set to false | The gate inside `#emit` consults `EVENT_CAPABILITY`; on a hit it throws `AriInvariantError` |
+| Exactly one `turn/completed` per `turn/started` | There is only **one** open-turn slot; `#settleTurn` is the sole exit, and a duplicate settlement throws immediately |
+| Exactly one `*/resolved` per `*/requested` | Settlement automatically closes out the turn's pending interactions (`cancelled`/`expired`) |
+| No dangling tools | Before settlement, a `tool/completed{status:"error"}` is automatically emitted, **before** `turn/completed` |
+| No events after settlement | `ctx` is "dead" once the turn settles; any emit throws |
 
-**这对适配层至关重要**：写适配层时不需要重新推导这些不变量，helper 已经强制了。
+**This is crucial for the adapter layers**: when writing an adapter you do not need to re-derive these invariants — the helper already enforces them.
 
-### 4.2 三个真 bug（都是"跨进程"才暴露的）
+### 4.2 Three real bugs (all exposed only "across processes")
 
-**进程内单元测试全部漏掉了它们**。第一个和第三个只有把 harness 当**子进程**、用真客户端驱动时才浮出来——因为只有跨进程才真的经过分帧，才有一个独立的状态跟踪者去发现不一致。
+**In-process unit tests missed all of them.** The first and the third surfaced only when the harness ran as a **child process** driven by the real client — only across processes does data truly pass through framing, and only then is there an independent state tracker to notice inconsistencies.
 
-1. **规范级缺陷：信封字段被 payload 覆盖。** `subagent/started` 的 payload 里有个 `sessionId`（指**子**会话），而每个事件信封已有 `sessionId`（指事件所属会话）。构建事件时 `{sessionId: 本会话, seq, ...payload}` 让 payload 静默改写信封 → 客户端去查一个不存在的会话，既不推进 `nextSeq` 也不记缺口 → 表现为莫名其妙的 seq 空洞。
-   - **修法**：字段改名 `childSessionId`（**ZCode 内部本来就叫这个名字**，反向印证），并在 SPEC §9.1 加规范性规则：`sessionId`/`seq`/`type` 为保留字段，payload 不得包含同名，Harness 必须拒绝此类事件。
-   - `#emit` 现在**信封字段展开在最后**（永远胜出），且显式拒绝 payload 里的 `sessionId`/`seq`。
+1. **A spec-level defect: an envelope field overwritten by the payload.** The `subagent/started` payload contains a `sessionId` (pointing at the **child** session), while every event envelope already carries `sessionId` (pointing at the session the event belongs to). Constructing the event as `{sessionId: thisSession, seq, ...payload}` let the payload silently overwrite the envelope → the client looked up a session that does not exist, neither advancing `nextSeq` nor recording a gap → it manifested as a baffling seq hole.
+   - **Fix**: rename the field to `childSessionId` (**ZCode's internals already used exactly this name** — reverse confirmation), and add a normative rule in SPEC §9.1: `sessionId`/`seq`/`type` are reserved fields; a payload must not contain fields with those names, and the harness must reject such events.
+   - `#emit` now **spreads the envelope fields last** (they always win) and explicitly rejects a payload containing `sessionId`/`seq`.
 
-2. **被拒的帧消耗了 seq。** 1 MiB 尺寸检查跑在 `seq += 1` 和写日志**之后**，超大事件会在流里留下永久空洞。现在检查前移到任何状态变更之前，被拒的帧完全无副作用。**这是客户端自己的 gap 检测抓出来的**。
+2. **A rejected frame consumed a seq.** The 1 MiB size check ran **after** `seq += 1` and after writing the log, so an oversized event left a permanent hole in the stream. The check now happens before any state change, and a rejected frame is completely side-effect free. **This one was caught by the client's own gap detection.**
 
-3. **工具状态在 emit 之前就被改了。** 帧被拒时客户端永远等不到 `tool/completed`，一个工具"开着"再也不会关。现在 `toolStarted`/`toolUpdated`/`toolCompleted` 一律**先 emit、后改状态**；配合结算时自动补关，保证"announce 过的工具一定会被 close"。
+3. **Tool state was mutated before the emit.** When a frame was rejected, the client would never receive the `tool/completed`, leaving a tool "open" that never closes. Now `toolStarted`/`toolUpdated`/`toolCompleted` always **emit first, mutate state second**; combined with the automatic close at settlement, this guarantees "every announced tool is eventually closed".
 
-**教训（写适配层时会再遇到）**：任何"先改状态、后发事件"的写法都是 bug 温床。**先发事件、成功后再改状态**。
+**Lesson (you will run into it again when writing adapter layers)**: any "mutate state first, emit event second" pattern is a bug nursery. **Emit the event first; mutate state only after it succeeds.**
 
-### 4.3 conformance 的设计难点与解法
+### 4.3 The conformance design problem and its solution
 
-**难点**：套件怎么把一个它从没见过的 harness 驱动到"请求审批""报错""慢到可以取消"这些路径？第三方 harness 不会认识 `approve` 这种关键词。
+**The problem**: how can the suite drive a harness it has never seen into paths like "requesting an approval", "erroring out", or "running slowly enough to cancel"? A third-party harness will not recognize keywords like `approve`.
 
-**解法**：两类检查。
+**The solution**: two classes of checks.
 
-| 类型 | 需要配合 | 覆盖 |
+| Type | Needs cooperation | Covers |
 |---|---|---|
-| **观测型** | 否 | seq 密度、每 turn 一次结算、能力门控、错误码、帧上限、stdout 纯净性、回执先于事件 |
-| **探针型** | 是（`--probe-*`） | 审批往返、提问往返、取消、队列溢出 |
+| **Observational** | No | seq density, one settlement per turn, capability gating, error codes, the frame cap, stdout purity, receipt preceding events |
+| **Probe-based** | Yes (`--probe-*`) | approval round-trip, question round-trip, cancel, queue overflow |
 
-**没提供探针的检查报 SKIP 并附上该加哪个参数**——不静默通过，也不因为"套件触发不了"而误判失败。
+**Checks whose probes were not supplied report SKIP together with the flag to add** — they neither silently pass, nor falsely fail because "the suite could not trigger the path".
 
-### 4.4 一个永远通过的 conformance 套件毫无价值
+### 4.4 A conformance suite that always passes is worthless
 
-所以有 `packages/conformance/test/broken-harness.ts`：它**刻意不使用 `AriHarness`**，手写 NDJSON，因为它要故意违规。9 种违规逐个验证套件抓得住：
+Hence `packages/conformance/test/broken-harness.ts`: it **deliberately does not use `AriHarness`** and hand-writes NDJSON, because its job is to violate the spec. 9 violations, each individually verified to be caught by the suite:
 
-| 违规 | 被抓的检查 |
+| Violation | Catching check |
 |---|---|
-| seq 跳号 | C06 |
-| `turn/started` 缺 `messageIds` | C07 |
-| 一个 turn 结算两次 | C08 |
-| 声明 `reasoning:false` 却发 `reasoning/delta` | C12 |
-| 事件先于 prompt 回执 | C14 |
-| 永不进入 idle | C22 |
-| stdout 打日志 | C21 |
-| 单帧 > 1 MiB | C21 |
-| `turn/completed{error}` 前无 `session/error` | C09 |
+| seq skips a number | C06 |
+| `turn/started` missing `messageIds` | C07 |
+| a turn settled twice | C08 |
+| declares `reasoning:false` yet emits `reasoning/delta` | C12 |
+| events before the prompt receipt | C14 |
+| never enters idle | C22 |
+| logs to stdout | C21 |
+| a single frame > 1 MiB | C21 |
+| `turn/completed{error}` with no preceding `session/error` | C09 |
 
-### 4.5 命名讨论的结论（不要重开）
+### 4.5 Outcome of the naming discussion (do not reopen it)
 
-- 曾考虑并**否决**：`ARP`（撞 Address Resolution Protocol，网络领域辨识度压倒性）、`AHP`（撞 Analytic Hierarchy Process，且语义倒置——把被抽象掉的实现层拿来命名抽象层）、`HIP`（双重碰撞：IETF 的 Host Identity Protocol + AMD 的 HIP）
-- 判断标准：搜「`<缩写>` protocol」谁赢。`ARP`/`HIP`/`AHP` 都有支配性结果，`ARI` 没有——这也是 `ari-protocol` 在 npm/GitHub 都空着的原因
-- `github.com/ari` 返回 200 的是**一个用户名**，不是仓库名，**不阻碍** `agent-runtime-interface/ari`
+- Considered and **rejected**: `ARP` (collides with Address Resolution Protocol; in networking that reading overwhelmingly dominates), `AHP` (collides with Analytic Hierarchy Process, and the semantics are inverted — naming the abstraction layer after the implementation layer it abstracts away), `HIP` (double collision: IETF's Host Identity Protocol + AMD's HIP)
+- The decision criterion: search "`<initialism>` protocol" and see who wins. `ARP`/`HIP`/`AHP` all have dominant results; `ARI` does not — which is also why `ari-protocol` is unclaimed on both npm and GitHub
+- The 200 response from `github.com/ari` is **a username**, not a repository name; it **does not block** `agent-runtime-interface/ari`
 
-### 4.6 "200 行可合规"这个说法需要重新表述
+### 4.6 The "compliant in 200 lines" claim needed rephrasing
 
-报告 D8 说「~200 行可合规」，而 mock harness 实际 339 行。差额几乎全在**场景分派**（20+ 条测试路径）；协议机制本身是 `harness.serve(process.stdin, process.stdout)` 加一个 delegate。README 里已改成更准确的说法：**协议义务由 helper 承担，harness 作者只需要写业务循环**。
-
----
-
-### 5.0 已完成（本文件最初写完后补做）
-
-**`packages/shell` 已完成**（`packages/shell/src/{main,render,policy}.ts` + `test/shell.test.ts`）。
-
-- `render.ts` — `renderEvent(event)` **纯函数**，把 21 种事件映射为 `{kind:"stream"|"line"|"none"}`。未知类型返回 `none` 而不抛错（附录 A 第 23 条）。
-- `policy.ts` — `chooseDecision` / `parseDecision` / `buildAnswers`，**保证不发出 `options` 之外的决策**（第 24 条）。
-- `main.ts` — CLI。`--prompt`（一次性）、交互模式（stdin 行驱动）、`--policy ask|allow|deny`、`--no-reasoning`、`--show-status`、`--raw`。Ctrl-C 取消在飞 turn，再按一次退出。
-- 测试 12 个，覆盖第 23–25 条 + CLI 冒烟。**全仓测试从 41 → 54，全绿。**
-
-**已验证的核心主张**：`grep -niE "mock|dsh|codex|zcode|opencode|acp" packages/shell/src/*.ts` **零命中**——壳里没有任何 harness 专有标识。13 条 mock 路径（tool/toolerror/chunks/dangling/usage/file/subagent/background/compact/error/throw/reasoning/echo）全部 exit 0。
-
-**两个踩过的坑（写别的东西时会再遇到）**：
-1. **不要用 `readline.question()` 驱动管道输入**——所有行在 question 之前就已到达并触发 `line` 事件，会被静默丢弃。改用 `line` 事件 + 自己的状态机（下一行是答复还是 prompt 由 `pendingApproval`/`pendingQuestion` 决定）。TTY 和管道都成立。
-2. **订阅要在动作之前**。`await respondApproval()` 返回时，harness 可能已经把 `turn/completed` 发出来了——之后再 `client.on("turn/completed")` 就永远等不到。先收集事件数组再轮询（`packages/shell/test/shell.test.ts` 里的 `waitFor` 就是这个模式）。
-
-### 5.1 未完成事项（按优先级）
-
-### P0 — 6 个适配层（`adapter-dsh` / `adapter-codex` / `adapter-zcode` / `adapter-opencode` / `adapter-pi` / `adapter-acp`）
-
-**适配原则：改信封、不改语义。** Harness 内部的 compaction 算法、PTC、工具管线、存储格式**不因适配 ARI 而改变**。
-
-参考 `SPEC.md` **附录 B**（ARI ↔ 各实现的逐行映射表）——那就是工作清单。
-
-**建议先做 1–2 个**，不要一次铺开：
-- **DSH** 语义最全（报告 Part A 的 A1），映射近乎一一对应
-- **Codex app-server** 信封差异最大（三级坐标信封 `thread_id/turn_id/item_id`），最能压测规范
-
-写适配层时**不要用 `AriHarness`**——那是给 harness 作者（服务端）用的；适配层是**翻译层**，把已有 harness 的私有协议翻译成 ARI，通常需要直接用 `AriClient` 的角色反向实现（即适配层扮演 server 对壳、扮演 client 对真 harness）。
-
-### P1 — 附录 A 的 Shell 侧三条（23–25）
-
-`23. 忽略未知事件 type/字段/能力键`、`24. 不发送不在 options 中的 decision`、`25. 断线后以 resume 重建状态并从 snapshot 恢复挂起交互`。
-
-**当前无法被 conformance CLI 覆盖**（那是面向 harness 的工具）。`packages/ari/test` 对参考客户端有部分覆盖。等 `packages/shell` 存在后，可以考虑给 conformance 加一个 `--as-shell` 模式，或单列一个 shell 侧测试。
-
-### P2 — 工程债
-
-- **`npm run typecheck` 从未成功执行过**。`typescript` 与 `@types/node` 在 `devDependencies` 里，但**从未 `pnpm install`**（项目刻意零依赖运行，所以不需要装）。**类型从未被 tsc 检查过**——只被 Node 的 type stripping 检查过（它只擦除、不检查）。这是真实缺口。建议：跑一次 `pnpm install && pnpm typecheck` 并修掉发现的问题（或明确记录为已知状态）。
-- **GitHub 仓库 description 与 topics 仍为空**，API 改不了，要在网页上填。建议文案见本文件 §7 末尾。
-- **`LICENSE` 著作权人是 `cholf5`**（取自 git config）。挂在组织下，用户可能想改成真名或组织名。这是普通文件改动，不受"历史已冻结"影响。
-- **npm scope 未定**。`packages/ari/package.json` 里是 `"name": "@ari/protocol"`，与组织名不一致。**目前所有包都是 `"private": true`，发不出去，所以不急**。真要发包时 scope 会是 `@agent-runtime-interface/...`（29 字符，import 手感差）。
-
-### P3 — 外部验证（最高价值但不可控）
-
-**找一个不是我们写的 harness 跑 `packages/conformance`。** 这是"规范可被第三方独立实现"的唯一硬证据。在此之前，D8 的论证只算验证了一半——README 里已如实这么写。
+Research report D8 said "~200 lines to compliance", while the mock harness is actually 339 lines. The difference is almost entirely **scenario dispatch** (20+ test paths); the protocol mechanics themselves are `harness.serve(process.stdin, process.stdout)` plus one delegate. The README has been reworded to the more accurate claim: **the helper carries the protocol obligations; the harness author only writes the business loop**.
 
 ---
 
-## 6. 建议接手路径
+### 5.0 Completed (added after this file was first written)
 
-### 先读什么（按顺序）
+**`packages/shell` is done** (`packages/shell/src/{main,render,policy}.ts` + `test/shell.test.ts`).
 
-1. **`SPEC.md`** — 规范性文本。至少读 §0（规范性语言）、§3（架构：为什么不用 server→client 请求）、§6（方法总览）、§8（结算不变量 I1–I7）、§9（事件流）、附录 A（一致性清单）。**这是唯一规范来源。**
-2. **`README.md`** — 仓库门面、目录结构、命令、conformance 用法。
-3. **`packages/ari/src/harness.ts`** — 核心。重点看 `#emit`（不变量强制点）、`#settleTurn`（唯一结算出口）、`TurnContext`（给 harness 作者的 API）。
-4. **`packages/ari/src/types.ts`** — 协议类型、`EVENT_CAPABILITY`（事件→能力映射）、`METHOD_CAPABILITY`（方法→能力映射）。
-5. **`packages/mock-harness/src/main.ts`** — 看一个合规 harness 长什么样（关键词驱动的 20+ 场景）。
-6. **`packages/conformance/src/checks.ts`** — 24 条检查的实现，也是"ARI 到底要求了什么"的可执行版本。
-7. 需要时再查 `ARI-RESEARCH-REPORT.md` 与 `research/`（中文，是**论证与证据**，不是实现依据）。
+- `render.ts` — `renderEvent(event)` is a **pure function** mapping the 21 event types to `{kind:"stream"|"line"|"none"}`. Unknown types return `none` instead of throwing (Appendix A check 23).
+- `policy.ts` — `chooseDecision` / `parseDecision` / `buildAnswers`, **guaranteeing no decision outside the offered `options` is ever sent** (check 24).
+- `main.ts` — the CLI. `--prompt` (one-shot), interactive mode (driven by stdin lines), `--policy ask|allow|deny`, `--no-reasoning`, `--show-status`, `--raw`. Ctrl-C cancels the in-flight turn; press it again to exit.
+- 12 tests, covering checks 23–25 + CLI smoke tests. **Repository-wide tests went from 41 → 54, all green.**
 
-### 先验证什么（动手前先跑一遍，建立基线）
+**The core claim has been verified**: `grep -niE "mock|dsh|codex|zcode|opencode|acp" packages/shell/src/*.ts` has **zero hits** — the shell contains no harness-specific identifiers. All 13 mock paths (tool/toolerror/chunks/dangling/usage/file/subagent/background/compact/error/throw/reasoning/echo) exit 0.
+
+**Two pitfalls already stepped on (you will meet them again when building other things)**:
+1. **Do not use `readline.question()` to drive piped input** — all lines arrive before the question is asked and fire `line` events, and are silently dropped. Use the `line` event + your own state machine instead (whether the next line is an answer or a prompt is decided by `pendingApproval`/`pendingQuestion`). This holds for both TTY and pipes.
+2. **Subscribe before you act.** By the time `await respondApproval()` returns, the harness may already have emitted `turn/completed` — calling `client.on("turn/completed")` afterwards will never catch it. Collect events into an array first, then poll (the `waitFor` in `packages/shell/test/shell.test.ts` is exactly this pattern).
+
+### 5.1 Outstanding work (by priority)
+
+### P0 — The 6 adapter layers (`adapter-dsh` / `adapter-codex` / `adapter-zcode` / `adapter-opencode` / `adapter-pi` / `adapter-acp`)
+
+**Adaptation principle: change the envelope, not the semantics.** A harness's internal compaction algorithm, PTC, tool pipeline, and storage format **do not change because of the ARI adaptation**.
+
+Refer to `SPEC.md` **Appendix B** (the line-by-line ARI ↔ each-implementation mapping table) — that is the work list.
+
+**Build 1–2 first**; do not spread out over all of them at once:
+- **DSH** has the most complete semantics (A1 in report Part A); the mapping is nearly one-to-one
+- **Codex app-server** has the largest envelope differences (the three-level coordinate envelope `thread_id/turn_id/item_id`) and stress-tests the spec the hardest
+
+When writing an adapter layer, **do not use `AriHarness`** — that is for harness authors (the server side). An adapter layer is a **translation layer** that translates an existing harness's private protocol into ARI; it usually needs to be implemented by using `AriClient`'s role in reverse (i.e. the adapter plays server to the shell and client to the real harness).
+
+### P1 — The three shell-side checks of Appendix A (23–25)
+
+`23. ignore unknown event types/fields/capability keys`, `24. never send a decision not among the offered options`, `25. after a disconnect, rebuild state via resume and restore pending interactions from the snapshot`.
+
+**The conformance CLI cannot cover these today** (it is a harness-facing tool). `packages/ari/test` partially covers the reference client. Now that `packages/shell` exists, consider adding an `--as-shell` mode to conformance, or a separate shell-side test suite.
+
+### P2 — Engineering debt
+
+- **`npm run typecheck` has never run successfully.** `typescript` and `@types/node` sit in `devDependencies`, but **`pnpm install` was never run** (the project deliberately runs with zero dependencies, so nothing needed installing). **Types have never been checked by tsc** — only processed by Node's type stripping (which erases but does not check). This is a real gap. Recommendation: run `pnpm install && pnpm typecheck` once and fix whatever it finds (or explicitly record it as a known state).
+- **The GitHub repository description and topics are still empty**; the API cannot change them, they must be filled in via the web UI. Suggested copy is at the end of §7 of this file.
+- **The `LICENSE` copyright holder is `cholf5`** (taken from git config). Now that the repository lives under the organization, the user may want to change it to a real name or the organization name. This is an ordinary file change, unaffected by "history is frozen".
+- **The npm scope is undecided.** `packages/ari/package.json` says `"name": "@ari/protocol"`, which does not match the organization name. **All packages are currently `"private": true` and cannot be published, so there is no rush**. If publishing ever happens, the scope will be `@agent-runtime-interface/...` (29 characters, awkward to type in imports).
+
+### P3 — External validation (highest value, least controllable)
+
+**Find a harness we did not write and run `packages/conformance` against it.** This is the only hard evidence that "the spec can be independently implemented by a third party". Until then, D8's argument is only half-validated — the README already says so honestly.
+
+---
+
+## 6. Recommended Takeover Path
+
+### What to read first (in this order)
+
+1. **`SPEC.md`** — the normative text. At minimum read §0 (normative language), §3 (architecture: why no server→client requests), §6 (method overview), §8 (settlement invariants I1–I7), §9 (the event stream), and Appendix A (the conformance checklist). **This is the single source of truth.**
+2. **`README.md`** — repository front page, directory structure, commands, conformance usage.
+3. **`packages/ari/src/harness.ts`** — the core. Focus on `#emit` (the invariant enforcement point), `#settleTurn` (the sole settlement exit), and `TurnContext` (the API handed to harness authors).
+4. **`packages/ari/src/types.ts`** — protocol types, `EVENT_CAPABILITY` (event → capability mapping), `METHOD_CAPABILITY` (method → capability mapping).
+5. **`packages/mock-harness/src/main.ts`** — what a compliant harness looks like (keyword-driven, 20+ scenarios).
+6. **`packages/conformance/src/checks.ts`** — the implementation of the 24 checks; also the executable form of "what ARI actually requires".
+7. Consult `ARI-RESEARCH-REPORT.md` and `research/` when needed (Chinese; they are the **argumentation and evidence**, not the implementation basis).
+
+### What to verify first (run once before doing anything, to establish the baseline)
 
 ```bash
-cd <仓库根目录>
+cd <repository root>
 
-# 1. 54 个测试应全绿
+# 1. All 54 tests should be green
 npm test
 
-# 2. conformance 对 mock harness 应 23 passed / 0 failed / 1 skipped
+# 2. conformance against the mock harness should be 23 passed / 0 failed / 1 skipped
 node packages/conformance/src/main.ts \
   --probe-approval approve --probe-question question \
   --probe-slow "slow 8000" --probe-error throw --queue-limit 3 \
   -- node packages/mock-harness/src/main.ts --queue-limit=3
 
-# 3. 那个 1 skipped 是 C13（mock 声明全部能力为 true），对 --minimal 应通过
+# 3. That 1 skipped is C13 (the mock declares every capability true); it should pass against --minimal
 node packages/conformance/src/main.ts --only C13 -- node packages/mock-harness/src/main.ts --minimal
 
-# 4. 套件确实有牙齿：故意违规的 harness 必须被抓
+# 4. The suite has teeth: the deliberately violating harness must be caught
 node packages/conformance/src/main.ts --only C06 -- node packages/conformance/test/broken-harness.ts --violate=gap
-#    期望：exit code 1，C06 FAIL
+#    Expected: exit code 1, C06 FAIL
 ```
 
-### 推荐的下一步动作
+### Recommended next actions
 
-**做第一个适配层，建议 `adapter-dsh`。** 理由：
+**Build the first adapter layer; `adapter-dsh` is recommended.** Why:
 
-1. 壳已完成并验证过「不认识对端也能驱动」（见 §5.0），现在缺的是真实 runtime
-2. DSH 在报告 Part A 的 A1 里记录最完整，语义最全，映射近乎一一对应
-3. 做完立刻用 `packages/conformance` 判据化验证，而不是靠眼看
+1. The shell is done and has verified "it can drive a peer it does not know" (see §5.0); what is missing now is a real runtime
+2. DSH is the most completely documented (A1 in report Part A), has the fullest semantics, and maps nearly one-to-one
+3. Once it is done, validate immediately with `packages/conformance` as the criterion, not by eyeballing
 
-**角色容易搞错**：适配层不是 harness，**不要用 `AriHarness`**。它是翻译器——对壳扮演 server（说 ARI），对真 harness 扮演 client（说它的私有协议）。两个方向通常都要手写，可直接用 `packages/ari/src/framing.ts` 的 `readFramesSafe` / `createFrameWriter` / `encodeFrame`。
+**The roles are easy to get wrong**: an adapter layer is not a harness — **do not use `AriHarness`**. It is a translator — playing server to the shell (speaking ARI) and client to the real harness (speaking its private protocol). Both directions usually need to be hand-written; you can use `readFramesSafe` / `createFrameWriter` / `encodeFrame` from `packages/ari/src/framing.ts` directly.
 
-**不要一次铺开 6 个。** 做完 1 个（最好再加 Codex app-server，它的三级坐标信封差异最大）再决定。若 1–2 个适配层就要往 SPEC 里加东西，那说明规范有问题——**改 SPEC 是正确动作**。
+**Do not build all 6 at once.** Finish 1 (ideally adding Codex app-server, whose three-level coordinate envelope differs the most), then decide. If 1–2 adapter layers already require adding things to the SPEC, that means the spec has a problem — **changing the SPEC is the correct action**.
 
 ---
 
-## 7. 风险与注意事项
+## 7. Risks and Cautions
 
-### 容易误判 / 重复劳动的点
+### Where misjudgments / duplicated effort happen
 
-| 陷阱 | 说明 |
+| Pitfall | Notes |
 |---|---|
-| **不要重开命名讨论** | 用户在此耗费大量精力后已定：组织 `agent-runtime-interface`、仓库 `ari`、展开 `Agent Runtime Interface`。不要再提议 ARP / 新名字 |
-| **不要"顺手"把 research/ 翻成英文** | 有意保留中文，是成本/收益权衡后的决定 |
-| **不要引入依赖** | 零依赖是特性。`npm install` 只在想跑 typecheck 时需要 |
-| **不要用 `enum`** | Node type stripping 不支持，`erasableSyntaxOnly: true` 会报错。用 `const` 对象 + `as const` + 联合类型 |
-| **不要忘记 `.ts` 扩展名** | `import { x } from "./y.ts"`，不是 `"./y"` |
-| **不要重写 git 历史** | 已公开推送 |
-| **不要把第三方克隆提交进去** | `codex/`、`opencode/`、`ZCode/`、`deepseek-harness` 已在 `.gitignore`，是调研现场 |
-| **不要把 `remote` 的 SSH 别名当成笔误去"修"** | 那是本机 SSH 配置（细节按仓库内容规范省略）；文档引用一律使用 HTTPS URL |
+| **Do not reopen the naming discussion** | After considerable effort this is settled: organization `agent-runtime-interface`, repository `ari`, expansion `Agent Runtime Interface`. Do not propose ARP or new names again |
+| **Do not casually translate `research/` into English** | Intentionally kept in Chinese — a deliberate cost/benefit decision |
+| **Do not introduce dependencies** | Zero dependencies is a feature. `npm install` is only needed if you want to run typecheck |
+| **Do not use `enum`** | Node type stripping does not support it; `erasableSyntaxOnly: true` will error out. Use `const` objects + `as const` + union types |
+| **Do not forget the `.ts` extension** | `import { x } from "./y.ts"`, not `"./y"` |
+| **Do not rewrite git history** | Already pushed publicly |
+| **Do not commit the third-party checkouts** | `codex/`, `opencode/`, `ZCode/`, `deepseek-harness` are in `.gitignore`; they are the research workspace |
+| **Do not "fix" the `remote` URL as if it were a typo** | It uses a local SSH alias (details omitted per content policy); documentation should cite `https://github.com/agent-runtime-interface/ari.git` |
 
-### 已验证过、不建议继续的方向
+### Directions already explored — do not continue down them
 
-- **给 ARI 加 server→client 请求**（学 ACP 的 `session/request_permission`）。已明确否决：会让壳必须实现请求路由器，破坏事件流的单一有序通道。理由写在 SPEC §3 与附录 C。
-- **采纳 client tools 反转**（客户端当工具提供方）。ACP v2 已删除该面，ARI 明确不做。
-- **把 PTC / PTY / 子 agent 编排 / 后台任务控制放进核心协议**。已判定为 runtime detail 或产品面，走 `x-` 扩展。
-- **把工具体标准化**。MCP 已解决，ARI 只定义工具**调用**的事件形状。
+- **Adding server→client requests to ARI** (copying ACP's `session/request_permission`). Explicitly rejected: it would force the shell to implement a request router and break the event stream's single ordered channel. The reasoning is in SPEC §3 and Appendix C.
+- **Adopting the client-tools inversion** (the client as tool provider). ACP v2 removed that surface; ARI explicitly will not do it.
+- **Putting PTC / PTY / subagent orchestration / background task control into the core protocol.** Judged to be runtime detail or product surface; they go through `x-` extensions.
+- **Standardizing the tool body.** MCP already solves that; ARI only defines the event shapes of tool **calls**.
 
-### 写代码时最容易踩的坑（来自实际 bug）
+### The coding pitfalls most likely to bite (learned from real bugs)
 
-1. **先 emit、后改状态。** 反过来做，一旦帧被拒（超大/编码失败）客户端状态就会永久不一致。这是本会话抓到的 bug #3。
-2. **信封字段不可被 payload 覆盖。** 新增任何带 `sessionId` 语义的 payload 字段时，**必须另起名字**（如 `childSessionId`）。bug #1。
-3. **任何可能抛错的检查都要放在状态变更之前。** bug #2。
-4. **跨进程测试才能发现分帧/状态一致性问题。** 进程内单元测试会漏掉一整类 bug。**每加一条新路径，都要在子进程形态下跑一遍。**
-5. **新增能力位时必须同时定义它门控的方法/事件**，否则能力位悬空——SPEC §5.3 的规则，`harness.ts` 的 `EVENT_CAPABILITY` / `METHOD_CAPABILITY` 是唯一真源。
+1. **Emit first, mutate state second.** Do it the other way around and, once a frame is rejected (oversized / encoding failure), client state becomes permanently inconsistent. This was bug #3 caught in this session.
+2. **Envelope fields must never be overwritable by the payload.** Any new payload field with `sessionId` semantics **must get a different name** (e.g. `childSessionId`). Bug #1.
+3. **Any check that can throw belongs before the state change.** Bug #2.
+4. **Only cross-process tests surface framing/state-consistency problems.** In-process unit tests miss an entire class of bugs. **Every new path must also be exercised once in child-process form.**
+5. **When adding a capability bit you must simultaneously define the methods/events it gates**, otherwise the capability bit dangles — the rule of SPEC §5.3; `harness.ts`'s `EVENT_CAPABILITY` / `METHOD_CAPABILITY` are the single source of truth.
 
-### 改规范时的纪律
+### Discipline when editing the spec
 
-- SPEC 是**规范性**文本，用 RFC 2119 关键词（MUST / MUST NOT / SHOULD / SHOULD NOT / MAY）。改它时保持关键词一致：**不要用 "is prohibited" 之类的同义表述**（这会让实现者 grep `MUST NOT` 时漏掉条款——本会话真修过 4 处）。
-- 改完 SPEC 要同步三处：`SPEC.md`（英文，规范）、`README.md` + `README.zh-CN.md`（门面）、`ARI-RESEARCH-REPORT.md` 的 Part D 与事件表（中文，推导记录）。
-- 改协议面要同步 `packages/ari/src/types.ts` 与 conformance 的 `checks.ts`。
+- The SPEC is **normative** text using RFC 2119 keywords (MUST / MUST NOT / SHOULD / SHOULD NOT / MAY). When editing it, keep the keywords consistent: **do not use synonymous phrasings like "is prohibited"** (implementers grepping for `MUST NOT` would miss the clause — 4 such spots really were fixed in this session).
+- After changing the SPEC, sync three places: `SPEC.md` (English, normative), `README.md` + `README.zh-CN.md` (front page), and Part D plus the event table of `ARI-RESEARCH-REPORT.md` (Chinese, the derivation record).
+- After changing the protocol surface, sync `packages/ari/src/types.ts` and the conformance `checks.ts`.
 
-### GitHub 仓库元数据（待用户在网页填写）
+### GitHub repository metadata (for the user to fill in via the web UI)
 
 **Description**
 ```
@@ -382,24 +384,24 @@ agent-protocol, agent-runtime, coding-agent, ai-agents, specification, json-rpc,
 
 ---
 
-## 下一位 Agent 的第一步建议
+## Suggested First Steps for the Next Agent
 
 ```bash
-cd <仓库根目录>
-npm test                    # 确认 54/54 绿，建立基线
-git log --oneline -3        # 确认 HEAD 包含 "Add the reference shell"
+cd <repository root>
+npm test                    # confirm 54/54 green, establish the baseline
+git log --oneline -3        # confirm HEAD includes "Add the reference shell"
 ```
 
-然后**读 `SPEC.md` 的 §3 / §6 / §8 / §9 与附录 A**，再读 `packages/ari/src/harness.ts` 的 `#emit` 与 `#settleTurn`，以及 `packages/shell/src/main.ts`（看一个"不认识对端"的壳长什么样）。
+Then **read `SPEC.md` §3 / §6 / §8 / §9 and Appendix A**, then `#emit` and `#settleTurn` in `packages/ari/src/harness.ts`, plus `packages/shell/src/main.ts` (to see what a shell that "does not know its peer" looks like).
 
-**接着开始做第一个适配层，建议 `adapter-dsh`。** 理由：报告 Part A 的 A1 对 DSH 的记录最完整，且 DSH 已有全部语义，映射近乎一一对应——**改信封、不改语义**。SPEC 附录 B 的映射表就是工作清单。
+**Then start the first adapter layer; `adapter-dsh` is recommended.** Why: A1 in report Part A documents DSH most completely, DSH already has all the semantics, and the mapping is nearly one-to-one — **change the envelope, not the semantics**. The mapping table in SPEC Appendix B is the work list.
 
-**适配层的角色容易搞错，先想清楚**：它不是 harness（**不要用 `AriHarness`**），而是一个**翻译器**——对壳扮演 server（说 ARI），对真 harness 扮演 client（说 DSH 的私有协议）。所以它通常需要手写两个方向，可直接用 `readFramesSafe` / `createFrameWriter` / `encodeFrame`（都在 `packages/ari/src/framing.ts`）。
+**The adapter layer's role is easy to get wrong; settle it first**: it is not a harness (**do not use `AriHarness`**) but a **translator** — playing server to the shell (speaking ARI) and client to the real harness (speaking DSH's private protocol). It therefore usually requires hand-writing both directions; use `readFramesSafe` / `createFrameWriter` / `encodeFrame` directly (all in `packages/ari/src/framing.ts`).
 
-做完第一个适配层后，**立刻用 `packages/conformance` 跑它**——那才是"适配对了没有"的判据，而不是靠眼看：
+Once the first adapter layer is done, **run `packages/conformance` against it immediately** — that is the criterion for "is the adaptation correct", not eyeballing:
 
 ```bash
-node packages/conformance/src/main.ts --probe-approval <DSH 里触发审批的 prompt> ... -- <适配层启动命令>
+node packages/conformance/src/main.ts --probe-approval <prompt that triggers an approval in DSH> ... -- <adapter layer launch command>
 ```
 
-**不要一次铺开 6 个适配层。** 做完 1 个（最好再做 Codex app-server，它的三级坐标信封 `thread_id/turn_id/item_id` 差异最大、最能压测规范）再决定是否继续。如果 1–2 个适配层就要往 SPEC 里加东西，那说明规范有问题——**这时候改 SPEC 是正确动作，不是失败**。
+**Do not build all 6 adapter layers at once.** Finish 1 (ideally then Codex app-server — its three-level coordinate envelope `thread_id/turn_id/item_id` differs the most and stress-tests the spec the hardest) before deciding whether to continue. If 1–2 adapter layers already require adding things to the SPEC, the spec has a problem — **changing the SPEC at that point is the correct action, not a failure**.
