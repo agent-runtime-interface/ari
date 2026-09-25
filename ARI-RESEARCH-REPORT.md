@@ -1,274 +1,274 @@
-# ARI 前期技术调研报告
+# ARI Preliminary Technical Research Report
 
-> ARI = **Agent Runtime Interface**——一套面向 Coding Agent Harness 的运行时契约。
-> 方法：以**源码与真实协议实现**为主要依据（每条关键结论都有 `path` + `symbol` 级引用，见 `research/01…08`），产品文档仅作补充并标注。
-> 本报告回答一个问题：现有主流 Coding Agent 的 Harness 之间，哪些是**真正共同的运行时抽象**，ARI 应该标准化什么、不该碰什么。
+> ARI = **Agent Runtime Interface** — a runtime contract for coding agent harnesses.
+> Method: **source code and real protocol implementations** are the primary evidence (every key conclusion carries a `path` + `symbol`-level citation, see `research/01…08`); product documentation is used only as a supplement and is labeled as such.
+> This report answers one question: across the harnesses of today's mainstream coding agents, which are the **genuinely shared runtime abstractions** — what ARI should standardize, and what it should not touch.
 
 ---
 
-# Part A：现有实现调查
+# Part A: Survey of Existing Implementations
 
-详细调查（每对象 2000+ 字、全量引用）在 `research/` 目录；此处为结论级摘要。
+Detailed surveys (2000+ characters per subject, full citations) live in the `research/` directory; this section is a conclusions-level summary.
 
-## A1. DSH（DeepSeek Harness）— [research/01-dsh.md]
+## A1. DSH (DeepSeek Harness) — [research/01-dsh.md]
 
-**形态**：开源 monorepo（github.com/deepseek-ai/deepseek-harness，v0.1.7-alpha.1），"everything is a plugin"，构建于 Cordis。出厂 profile：`web / headless / sdk / sdk-minimal / acp`（docs/architecture.md:19）。
+**Form**: open-source monorepo (github.com/deepseek-ai/deepseek-harness, v0.1.7-alpha.1), "everything is a plugin", built on Cordis. Out-of-the-box profiles: `web / headless / sdk / sdk-minimal / acp` (docs/architecture.md:19).
 
-**核心抽象**：
-- **Session = append-only `SessionEvent` 日志**（`ctx.sessions`）："Model-visible means logged" 运行时不变量——凡进入模型请求的必须可从日志重建（architecture.md:125）。持久事件词汇：`turn/start|end`、`step/start|end`、`user/message`、`developer/message`、`system/message`、`assistant/message`（嵌入完整定时原始流 + usage）、`assistant/attempt`（失败/取消 attempt，log-only）、`tool/call`（原始未解析 arguments）、`tool/result`（+ 工具私有 `meta`）、`request/header|context`、`session/end-seed`（packages/core/session/src/types.ts；docs/subsystems/session.md:27-174）。插件合并扩展：`compaction/*`、`approval/asked|decided`、`todo/write`、`goal/*`、`tool/ptc-dispatch*` 等。
-- **事件三域**：durable session events / live `agent/*` 扩展点（pre-step、request、assistant-stream、inbox）/ capability seams（`fs/*`、`tools/*`）。
-- **Turn flow 状态机**（architecture.md:88-113）：`turn/start → claim 输入 → agent/pre-step(waterfall) → step/start → agent/request → 流式 llm/stream → tool/call* → tools/pre|execute|post-execute → step/end →（工具欠请求或新输入→下一 step）→ agent/turn-stopping → turn/end`。重试在 `agent/request-error`（llm-retry）；循环检测为 `repeat-tool-reminder` 插件；并行工具 `isConcurrencySafe` 显式 opt-in。
-- **对外协议面（4 个）**：① SDK JSON-RPC over stdio（newline-delimited，方法仅 `initialize`、`session/prompt`→durable 回执、`shutdown`；通知 `session.event`/`session.status`/`subagent.started|finished`；明确无 cancel/版本协商，packages/sdk/protocol/README.md:113-115）；② **ACP automation-only server**（packages/acp）；③ Web GUI（HTTP + `/api` typed Remote 层 + SSE 流，api/ 控制器族）；④ Webhook（fire-and-forget 会话创建）。
-- **Approval**：闭式 `ApprovalOutcome = allowed-once | rejected | cancelled | unavailable`（fail-closed，无 allow-always），per-session 策略 `ask | never`，`ApprovalRequest` 刻意不含参数（用 `callId` 关联已流式展示的 tool call）；开放式问题走独立的 `user-questions` seam（`ask_user_question`，intent 如 `plan-review`）。
-- **Compaction**：log-only 三事件 + 摘要以唯一一次 surface 变更（`user/message` + `surfaceOp:replace`）落盘；触发 `pressure | context-overflow`；可选 tool-result 裁剪、image offload；崩溃留下可检测孤儿锁。
-- **PTC**：`ctx.ptcRuntime`（沙箱 JS 程序 + host bindings）；`run_code` 工具下**每个被桥接的 sub-call 产生 `tool/ptc-dispatch-start|dispatch` 事件并重入完整工具管线**（tool-catalog.md:22）。
-- **Subagent**：可插 provider（in-process / dsh-sdk / acp 桥），`subagent|subagent_fork` 工具 + `send_message/interrupt_agent/list_agents` 控制工具；实验性 Agent Teams（roster/task board/mailbox）。
+**Core abstractions**:
+- **Session = append-only `SessionEvent` log** (`ctx.sessions`): the "Model-visible means logged" runtime invariant — anything that enters a model request must be reconstructible from the log (architecture.md:125). Persistent event vocabulary: `turn/start|end`, `step/start|end`, `user/message`, `developer/message`, `system/message`, `assistant/message` (embedding the full timed raw stream + usage), `assistant/attempt` (failed/cancelled attempt, log-only), `tool/call` (raw unresolved arguments), `tool/result` (+ tool-private `meta`), `request/header|context`, `session/end-seed` (packages/core/session/src/types.ts; docs/subsystems/session.md:27-174). Plugin-merged extensions: `compaction/*`, `approval/asked|decided`, `todo/write`, `goal/*`, `tool/ptc-dispatch*`, etc.
+- **Three event domains**: durable session events / live `agent/*` extension points (pre-step, request, assistant-stream, inbox) / capability seams (`fs/*`, `tools/*`).
+- **Turn-flow state machine** (architecture.md:88-113): `turn/start → claim input → agent/pre-step(waterfall) → step/start → agent/request → streaming llm/stream → tool/call* → tools/pre|execute|post-execute → step/end → (outstanding tool calls or new input → next step) → agent/turn-stopping → turn/end`. Retries happen at `agent/request-error` (llm-retry); loop detection is the `repeat-tool-reminder` plugin; parallel tools require explicit opt-in via `isConcurrencySafe`.
+- **External protocol surfaces (4)**: ① SDK JSON-RPC over stdio (newline-delimited; methods only `initialize`, `session/prompt` → durable receipt, `shutdown`; notifications `session.event`/`session.status`/`subagent.started|finished`; explicitly no cancel/version negotiation, packages/sdk/protocol/README.md:113-115); ② **ACP automation-only server** (packages/acp); ③ Web GUI (HTTP + the `/api` typed Remote layer + SSE streams, the api/ controller family); ④ Webhook (fire-and-forget session creation).
+- **Approval**: closed-form `ApprovalOutcome = allowed-once | rejected | cancelled | unavailable` (fail-closed, no allow-always), per-session policy `ask | never`; `ApprovalRequest` deliberately carries no arguments (it correlates with the already-streamed tool call via `callId`); open-ended questions go through the separate `user-questions` seam (`ask_user_question`, intents such as `plan-review`).
+- **Compaction**: three log-only events + the summary lands on disk as exactly one surface change (`user/message` + `surfaceOp:replace`); triggers are `pressure | context-overflow`; optional tool-result trimming, image offload; a crash leaves a detectable orphan lock.
+- **PTC**: `ctx.ptcRuntime` (sandboxed JS programs + host bindings); under the `run_code` tool, **every bridged sub-call emits `tool/ptc-dispatch-start|dispatch` events and re-enters the full tool pipeline** (tool-catalog.md:22).
+- **Subagent**: pluggable providers (in-process / dsh-sdk / acp bridge), the `subagent|subagent_fork` tools + the `send_message/interrupt_agent/list_agents` control tools; experimental Agent Teams (roster/task board/mailbox).
 
 ## A2. ZCode — [research/02-zcode.md]
 
-**形态**：zai-org/ZCode（TS pnpm monorepo）。Runtime = `apps/zcode-cli` 子 monorepo；客户端经 `zcodeProtocolClient`（stdio transport）→ bootstrap 协议服务（v4-bridge）→ `AgentRuntime`。
+**Form**: zai-org/ZCode (TS pnpm monorepo). The runtime is the `apps/zcode-cli` sub-monorepo; a client goes through `zcodeProtocolClient` (stdio transport) → the bootstrap protocol service (v4-bridge) → `AgentRuntime`.
 
-**客户端协议 "Protocol V4"**（`packages/shared/src/zcode-protocol-v4/`，`V4_WIRE_PROTOCOL_VERSION=3`，自述**未冻结**）：双面 = **JSON-RPC 命令 + topic 发布/订阅**。握手协商 `clientMode`（desktop-continuous | web-remote-replayable）与 `HostCapabilities`；订阅带 **watermark `{logEpoch, seq}`** → ack 后以 `snapshot | resume` 模式投递；>1MiB 帧分片 + crc32；~35 个 `v4/*` RPC（conversation subscribe/resync/fileChanges/usage…）；命令带幂等键与 baseRevision CAS。
-**最重要的设计**：**客户端只见投影**——`ConversationRow`（9 种：turnHeader/userInput/assistantText/reasoning/toolCall/artifact/subagent/hookInvocation/timelineMarker）+ 恰好 **5 种 delta 操作**（row.appended/upserted/removed、row.delta、state.updated）+ 封闭 `StatePatch`（~20 键：usage、queue、pendingInteractions、backgroundWorks、subagents、goal、plan…）。Runtime 内部是事件溯源（~90 种 SessionEventType）+ SQLite；不变量 `reduce(transcript) ≡ reduce(events)`。
-**审批**：`pendingInteractions {kind: permission|userInput|workspaceHookReview}` + `resolveInteraction` 命令；**Runtime 侧支持 `modifiedInput` 参数改写**（独有）；选项 allowOnce/allowAlways/deny/custom。
-**其余**：双层 compaction（auto+micro）、PAUSABLE 工具超时、`repeatedToolCallSignature` 循环检测、并行调度 maxConcurrency 10、subagent 独立 sessionId + drill-down + 事件镜像（`tool_subagent` 前缀）、PTC 半原生（持久 NodeRepl + DynamicWorkflow 脚本引擎）。
+**Client protocol "Protocol V4"** (`packages/shared/src/zcode-protocol-v4/`, `V4_WIRE_PROTOCOL_VERSION=3`, self-described as **not frozen**): two sides = **JSON-RPC commands + topic pub/sub**. The handshake negotiates `clientMode` (desktop-continuous | web-remote-replayable) and `HostCapabilities`; subscriptions carry a **watermark `{logEpoch, seq}`** → after the ack, delivery proceeds in `snapshot | resume` mode; frames >1MiB are fragmented + crc32; ~35 `v4/*` RPCs (conversation subscribe/resync/fileChanges/usage…); commands carry idempotency keys and baseRevision CAS.
+**The most important design decision**: **the client only ever sees projections** — `ConversationRow` (9 kinds: turnHeader/userInput/assistantText/reasoning/toolCall/artifact/subagent/hookInvocation/timelineMarker) + exactly **5 delta operations** (row.appended/upserted/removed, row.delta, state.updated) + a closed `StatePatch` (~20 keys: usage, queue, pendingInteractions, backgroundWorks, subagents, goal, plan…). Internally the runtime is event sourcing (~90 SessionEventType kinds) + SQLite; the invariant is `reduce(transcript) ≡ reduce(events)`.
+**Approval**: `pendingInteractions {kind: permission|userInput|workspaceHookReview}` + the `resolveInteraction` command; **the runtime side supports `modifiedInput` argument rewriting** (unique); options are allowOnce/allowAlways/deny/custom.
+**The rest**: two-layer compaction (auto+micro), PAUSABLE tool timeouts, `repeatedToolCallSignature` loop detection, parallel dispatch with maxConcurrency 10, subagents get an independent sessionId + drill-down + event mirroring (the `tool_subagent` prefix), semi-native PTC (persistent NodeRepl + the DynamicWorkflow script engine).
 
-## A3. Codex CLI（codex-rs）— [research/03-codex-cli.md]
+## A3. Codex CLI (codex-rs) — [research/03-codex-cli.md]
 
-**形态**：openai/codex 的 Rust 实现（HEAD 44b857c00e）。
-**消息模型三层**：`ResponseItem`（模型 wire）→ `ResponseEvent`（SSE 解码）→ `EventMsg`（**面向客户端的 ~60 变体枚举**，protocol.rs:1341）。新命名：`TurnStarted/TurnComplete`、`Op::TurnInput`、`AgentMessageContentDelta`、`ReasoningContentDelta`；提交封装已移除（`CodexThread::submit(Op)->String`）。
-**Session**：append-only JSONL `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid7>.jsonl`（`RolloutLine{timestamp, ordinal, item}`）；`codex resume [id|--last|--all]`、fork = `InitialHistory::Forked` + `forked_from_id`；崩溃恢复 = 重新打开 + 反向 JSONL 扫描 + 打印 resume 提示；SQLite state db。
-**Loop**：`run_turn → run_pre_sampling_compact → build_prompt → try_run_sampling_request` 流式循环；**并行工具 = in_flight `FuturesOrdered`**（turn.rs:2502）；重试 5s→60s 退避 + `StreamError` 事件；`Op::Interrupt → CancellationToken → TurnAborted{Interrupted|Replaced|ReviewEnded|BudgetLimited}`；无 max_turns。
-**审批**：`AskForApproval{UnlessTrusted, OnRequest(默认), Granular{5 toggles}, Never}` + `SandboxPolicy`；`request_command_approval` 把 oneshot 放入 `TurnState.pending_approvals` 并发 `ExecApprovalRequest`（**不应答 ⇒ Abort**）；`ReviewDecision` 8 变体，含 `ApprovedForSession`、`ApprovedExecpolicyAmendment`、`NetworkPolicyAmendment`。
-**传输**：`codex proto` **已不存在**——① 进程内 async_channel（TUI）；② `codex exec --json` 单向 JSONL；③ app-server 双向 JSON-RPC。
-**原生 Subagent**（spawn_agent/send_message/wait_agent/close_agent/resume_agent，真实 thread + parent_thread_id）与**原生 PTC**（Code Mode：V8 JS runtime，工具从 JSON Schema 生成 TS 类型，嵌套工具调用经 ToolRouter 回路由）。
+**Form**: the Rust implementation inside openai/codex (HEAD 44b857c00e).
+**Three-layer message model**: `ResponseItem` (model wire) → `ResponseEvent` (SSE decoding) → `EventMsg` (**the client-facing ~60-variant enum**, protocol.rs:1341). New naming: `TurnStarted/TurnComplete`, `Op::TurnInput`, `AgentMessageContentDelta`, `ReasoningContentDelta`; the submit wrapper has been removed (`CodexThread::submit(Op)->String`).
+**Session**: append-only JSONL at `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid7>.jsonl` (`RolloutLine{timestamp, ordinal, item}`); `codex resume [id|--last|--all]`; fork = `InitialHistory::Forked` + `forked_from_id`; crash recovery = reopen + a reverse JSONL scan + printing a resume hint; SQLite state db.
+**Loop**: the `run_turn → run_pre_sampling_compact → build_prompt → try_run_sampling_request` streaming loop; **parallel tools = in_flight `FuturesOrdered`** (turn.rs:2502); retries back off 5s→60s + `StreamError` events; `Op::Interrupt → CancellationToken → TurnAborted{Interrupted|Replaced|ReviewEnded|BudgetLimited}`; no max_turns.
+**Approval**: `AskForApproval{UnlessTrusted, OnRequest(default), Granular{5 toggles}, Never}` + `SandboxPolicy`; `request_command_approval` puts a oneshot into `TurnState.pending_approvals` and emits `ExecApprovalRequest` (**no response ⇒ Abort**); `ReviewDecision` has 8 variants, including `ApprovedForSession`, `ApprovedExecpolicyAmendment`, `NetworkPolicyAmendment`.
+**Transport**: `codex proto` **no longer exists** — ① in-process async_channel (TUI); ② `codex exec --json` one-way JSONL; ③ app-server bidirectional JSON-RPC.
+**Native subagents** (spawn_agent/send_message/wait_agent/close_agent/resume_agent, real thread + parent_thread_id) and **native PTC** (Code Mode: a V8 JS runtime; tool TS types generated from JSON Schema; nested tool calls routed back through ToolRouter).
 
 ## A4. OpenCode — [research/04-opencode.md]
 
-**形态**：客户端/服务器架构（origin anomalyco/opencode，v1.18.32）。TUI/App/CLI 都是 HTTP/SSE 客户端；`packages/schema`（Effect Schema 契约）← `packages/protocol` ← `packages/core`（SQLite/drizzle + EventV2）← `packages/opencode`（instance runtime + Effect HttpApi server）。V1 loop 与 V2 durable runtime 并存。
-**消息模型**：12 种 Part（text/reasoning/file/agent/subtask/tool/step-start/step-finish/snapshot/patch/retry/compaction）；**tool part 状态机 `pending→running→completed|error`（无 cancelled，abort→error）**。事件名（真实）：`session.created/updated`、`message.updated`、`message.part.updated/delta{field,delta}`、`session.idle`、`session.compacted`、`permission.asked/replied`、`question.asked/replied/rejected`、`file.edited`、`file.watcher.updated`、`pty.*`、`todo.updated`、V2 `session.next.*`（~30）。
-**Loop**：`SessionPrompt.loop` while(true)，每 turn 一次 `llm.stream`；退出条件 finish ∉ {tool-calls, unknown} 且无 pending 工具；`agent.steps ?? Infinity`；overflow 触发 auto-compaction；并行工具经 ai-sdk callID-keyed 结算；retry = status+RetryPart；无全局超时/预算。
-**权限**：ruleset（agent+session 合并）`allow/ask/deny` + pattern；`permission.asked` → 阻塞 Deferred → 回复 `once | always | reject`（**reject 携带用户反馈文本回灌模型**，always 自动放行同类 pending）；无参数改写。
-**特有**：PTY 一等公民（`/api/pty` CRUD + `pty.*` 事件）；git shadow snapshot 回滚；子代理 = **真实子 session**（parentID、深度限制 1，**事件不转发——客户端从 tool part `metadata.sessionId` 自行订阅**）；PTC 实验性（code-mode `execute`，仅 MCP 工具）；完成语义 = `session.idle` + `/wait`。
-**传输**：REST + SSE `/api/event`（`{id: evt_, type, properties}`，10s 心跳，按 workspace 过滤）。
+**Form**: client/server architecture (origin anomalyco/opencode, v1.18.32). TUI/App/CLI are all HTTP/SSE clients; `packages/schema` (Effect Schema contracts) ← `packages/protocol` ← `packages/core` (SQLite/drizzle + EventV2) ← `packages/opencode` (instance runtime + Effect HttpApi server). The V1 loop and the V2 durable runtime coexist.
+**Message model**: 12 kinds of Part (text/reasoning/file/agent/subtask/tool/step-start/step-finish/snapshot/patch/retry/compaction); **the tool-part state machine is `pending→running→completed|error` (no cancelled; abort → error)**. Event names (verified real): `session.created/updated`, `message.updated`, `message.part.updated/delta{field,delta}`, `session.idle`, `session.compacted`, `permission.asked/replied`, `question.asked/replied/rejected`, `file.edited`, `file.watcher.updated`, `pty.*`, `todo.updated`, V2 `session.next.*` (~30).
+**Loop**: `SessionPrompt.loop` is a while(true) with one `llm.stream` per turn; the exit condition is finish ∉ {tool-calls, unknown} and no pending tools; `agent.steps ?? Infinity`; overflow triggers auto-compaction; parallel tools are settled via ai-sdk callID-keyed settlement; retry = status+RetryPart; no global timeout/budget.
+**Permissions**: a ruleset (agent+session merged) of `allow/ask/deny` + patterns; `permission.asked` → a blocking Deferred → the reply is `once | always | reject` (**reject carries the user's feedback text back into the model**; always auto-releases other pending requests of the same kind); no argument rewriting.
+**Distinctive**: PTY as a first-class citizen (`/api/pty` CRUD + `pty.*` events); git shadow snapshot rollback; subagents = **real child sessions** (parentID, depth limit 1, **events are not forwarded — the client subscribes on its own via the tool part's `metadata.sessionId`**); PTC is experimental (code-mode `execute`, MCP tools only); completion semantics = `session.idle` + `/wait`.
+**Transport**: REST + SSE `/api/event` (`{id: evt_, type, properties}`, 10s heartbeat, filtered by workspace).
 
-## A5. Pi（badlogic/pi-mono）— [research/05-pi.md]
+## A5. Pi (badlogic/pi-mono) — [research/05-pi.md]
 
-**形态**：包结构与预期不同：`agent`（runtime 核心）、`ai`（provider 层）、`coding-agent`（CLI）、`tui`、`chord`、`protocol/server/client`（实验多客户端 CBOR）、`durable`；另有部分实现的 next-gen durable harness（Lanes + durable Tasks）。
-**Runtime 事件恰好 10 种**（agent/src/types.ts:485-500）：agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；产品层再加 `agent_settled`（"不再有自动工作：重试/溢出恢复/队列都结束"——ARI 需要这个语义）、`queue_update`、`compaction_start/end`、`auto_retry_*` 等。
-**消息模型**：4 role + 扩展自定义 role（declaration merging + `convertToLlm` 边界）；**SystemMessage 携带 prompt + 工具装载的增量 delta**（sections + toolsAdded/toolsRemoved），持久化与 wire 同一机制。
-**Session**：append-only JSONL **树**（entry `{id,parentId}`，leaf=最后 entry；分支=移动 leaf 指针；fork=复制路径到新文件；`ContextEditEntry` 追加式改写）；崩溃容忍=跳过坏行 + 延迟建文件。
-**关键取舍**：**无内置权限系统**（README 明示）——扩展 `tool_call` hook 返回 `{block,reason}` + 通用 UI 对话框（RPC `extension_ui_request/response`）；**无 max iterations/循环检测/PTC/内置 subagent**；`stopReason==="length"` 使该消息**全部**工具调用失败（截断参数安全）；工具结果双通道 `content(模型)/details(UI)`。
-**传输**：TUI/print/json/RPC（strict-LF JSONL，~30 命令，背压感知，stdin 关闭=优雅停机）/in-process SDK/实验 CBOR 多客户端。
+**Form**: the package layout differs from what one would expect: `agent` (runtime core), `ai` (provider layer), `coding-agent` (CLI), `tui`, `chord`, `protocol/server/client` (experimental multi-client CBOR), `durable`; plus a partially implemented next-gen durable harness (Lanes + durable Tasks).
+**Exactly 10 runtime events** (agent/src/types.ts:485-500): agent_start/end, turn_start/end, message_start/update/end, tool_execution_start/update/end; the product layer adds `agent_settled` ("no more automatic work: retries/overflow recovery/queues are all finished" — ARI needs this semantics), `queue_update`, `compaction_start/end`, `auto_retry_*`, etc.
+**Message model**: 4 roles + extendable custom roles (declaration merging + the `convertToLlm` boundary); **SystemMessage carries the prompt + the incremental deltas of tool loading** (sections + toolsAdded/toolsRemoved); persistence and the wire use the same mechanism.
+**Session**: an append-only JSONL **tree** (entries `{id,parentId}`; leaf = the last entry; branching = moving the leaf pointer; fork = copying the path to a new file; `ContextEditEntry` append-style rewrites); crash tolerance = skipping bad lines + deferring file creation.
+**Key trade-offs**: **no built-in permission system** (the README says so explicitly) — an extension's `tool_call` hook returns `{block,reason}` + a generic UI dialog (RPC `extension_ui_request/response`); **no max iterations / loop detection / PTC / built-in subagents**; `stopReason==="length"` fails **all** tool calls of that message (so truncated arguments are safe); tool results are dual-channel `content(model)/details(UI)`.
+**Transport**: TUI/print/json/RPC (strict-LF JSONL, ~30 commands, backpressure-aware, closed stdin = graceful shutdown) / in-process SDK / experimental CBOR multi-client.
 
-## A6. ACP（Agent Client Protocol）— [research/06-acp.md]
+## A6. ACP (Agent Client Protocol) — [research/06-acp.md]
 
-**形态**：Zed Industries 的公开标准（agentclientprotocol.com）。**Client(editor) ↔ Agent 子进程**；一连接多 session。
-**传输**：JSON-RPC 2.0 over stdio，**newline-delimited**（非 Content-Length），stdout 纯净性规则；协议声明 transport-agnostic（HTTP/WS 是 RFD 草案）；整数 protocolVersion 仅 MAJOR + capability 位；**wire 版本与 SDK/schema 工件版本解耦**。
-**会话**：`session/new|load|resume|close|list|delete|prompt|cancel|set_config_option`；`session/load` 通过 session/update **全量重放历史**后再应答；v1 中 `session/prompt` 的**响应即 turn 结束**（`stopReason: end_turn|max_tokens|max_turn_requests|refusal|cancelled`）——v2 草案解耦（`state_update running|idle|requires_action`）。
-**流**：11 种稳定 `session/update`（agent_message_chunk、agent_thought_chunk、tool_call(+update, 10 种 kind、pending→in_progress→completed|failed、content=content|diff|terminal、rawInput/rawOutput)、plan、usage_update{used,size,cost?}…）+ unstable（compaction 等）。
-**Client-tool 反转**：v1 让客户端当工具提供方（fs/read_text_file、fs/write_text_file、terminal/create|output|kill…、elicitation/create）——**v2 草案删除了整个 client 执行面**（"除少数 IDE 外实现不一致"），改为客户端经 MCP 服务器注入工具。**这是 ARI 不应复制该设计的直接证据。**
-**审批**：`session/request_permission {toolCall, options[{optionId, name, kind: allow_once|allow_always|reject_once|reject_always}]}` → `{outcome: selected|cancelled}`；**无参数改写**；两级取消（`session/cancel` + `$/cancel_request`/-32800）。
-**不覆盖**：subagent、后台任务（v2 draft "beyond the turn" 才有）、每 turn token（Draft RFD）、compaction（unstable）、PTC。
+**Form**: Zed Industries' public standard (agentclientprotocol.com). **Client (editor) ↔ Agent subprocess**; one connection, many sessions.
+**Transport**: JSON-RPC 2.0 over stdio, **newline-delimited** (not Content-Length), with stdout purity rules; the protocol claims to be transport-agnostic (HTTP/WS is an RFD draft); integer protocolVersion, MAJOR-only + capability bits; **the wire version is decoupled from the SDK/schema artifact versions**.
+**Sessions**: `session/new|load|resume|close|list|delete|prompt|cancel|set_config_option`; `session/load` **replays the full history** via session/update before answering; in v1 the **response to `session/prompt` is the end of the turn** (`stopReason: end_turn|max_tokens|max_turn_requests|refusal|cancelled`) — the v2 draft decouples this (`state_update running|idle|requires_action`).
+**Stream**: 11 stable `session/update` kinds (agent_message_chunk, agent_thought_chunk, tool_call(+update, 10 kinds, pending→in_progress→completed|failed, content=content|diff|terminal, rawInput/rawOutput), plan, usage_update{used,size,cost?}…) + unstable ones (compaction, etc.).
+**Client-tool inversion**: v1 makes the client the tool provider (fs/read_text_file, fs/write_text_file, terminal/create|output|kill…, elicitation/create) — **the v2 draft removed the entire client-side execution surface** ("implementations are inconsistent outside a few IDEs"), replaced by clients injecting tools through MCP servers. **This is direct evidence that ARI should not copy that design.**
+**Approval**: `session/request_permission {toolCall, options[{optionId, name, kind: allow_once|allow_always|reject_once|reject_always}]}` → `{outcome: selected|cancelled}`; **no argument rewriting**; two-level cancellation (`session/cancel` + `$/cancel_request`/-32800).
+**Not covered**: subagents, background tasks (only appear in the v2 draft, "beyond the turn"), per-turn tokens (Draft RFD), compaction (unstable), PTC.
 
 ## A7. Codex App Server — [research/07-codex-app-server.md]
 
-**形态**：openai/codex 内 `codex-rs/app-server`——IDE 扩展/外部客户端驱动 Codex 的 JSON-RPC API（本 checkout 为 **v2 `thread.*` 命名**；legacy `newConversation/codex/event/*` 已不存在）。
-**传输**：line-delimited JSON over stdio + unix control socket + websocket + remote-control；**双向**：9 种 server→client request 类型；多连接 fan-out。
-**规模**：~150 个 client→server 方法（`thread/*`、`turn/*`、`fs/*`、`process/*`、`plugin/*`、`queue/*`…）+ ~110 个通知（`item/*`、`thread/*`、`turn/*`、`account/*`）。**三级坐标信封：几乎每个通知都带 `thread_id/turn_id/item_id`**。
-**统一 item 抽象**：16 类 ThreadItem 以 `item/started|completed` 包夹 `item/*Delta`。
-**审批**：封闭决策枚举 `Accept | AcceptForSession | AcceptWithExecpolicyAmendment | ApplyNetworkPolicyAmendment | Decline | Cancel`（item.rs:66）；**不能修改命令**，但可附策略修正；`available_decisions` 服务端声明；`approvals_reviewer=auto_review` 可让服务端 subagent 代批。
-**Client tools 反转存在**：`thread/start.dynamic_tools` → runtime 发 `item/tool/call` 请求 → 结果回灌 core。
-**Usage**：`thread/tokenUsage/updated`（cached/cache_write/reasoning_output 分列）+ rateLimits 双通道。
-**覆盖修正**：compaction 有（`thread/compact/start`，不可参数化）；terminal 很全（command/exec、process/*、backgroundTerminals）；subagent 只有事件面（SubAgentActivity/CollabAgentToolCall item）无编排 API；文件 diff 为文件级统一 diff（FileUpdateChange）；raw 模型流需 experimentalRawEvents opt-in。
+**Form**: `codex-rs/app-server` inside openai/codex — the JSON-RPC API through which IDE extensions/external clients drive Codex (this checkout is on the **v2 `thread.*` naming**; the legacy `newConversation/codex/event/*` no longer exists).
+**Transport**: line-delimited JSON over stdio + a unix control socket + websocket + remote-control; **bidirectional**: 9 kinds of server→client request; multi-connection fan-out.
+**Scale**: ~150 client→server methods (`thread/*`, `turn/*`, `fs/*`, `process/*`, `plugin/*`, `queue/*`…) + ~110 notifications (`item/*`, `thread/*`, `turn/*`, `account/*`). **A three-level coordinate envelope: almost every notification carries `thread_id/turn_id/item_id`**.
+**A unified item abstraction**: 16 kinds of ThreadItem, with `item/*Delta` bracketed by `item/started|completed`.
+**Approval**: the closed decision enum `Accept | AcceptForSession | AcceptWithExecpolicyAmendment | ApplyNetworkPolicyAmendment | Decline | Cancel` (item.rs:66); **the command cannot be modified**, but policy amendments can be attached; `available_decisions` is declared by the server; `approvals_reviewer=auto_review` lets a server-side subagent approve on the client's behalf.
+**Client-tools inversion exists**: `thread/start.dynamic_tools` → the runtime issues `item/tool/call` requests → results flow back into core.
+**Usage**: `thread/tokenUsage/updated` (cached/cache_write/reasoning_output broken out) + a dual-channel rateLimits.
+**Coverage corrections**: compaction exists (`thread/compact/start`, not parameterizable); terminal support is quite complete (command/exec, process/*, backgroundTerminals); subagents have only an event surface (SubAgentActivity/CollabAgentToolCall items) with no orchestration API; the file diff is a file-level unified diff (FileUpdateChange); the raw model stream requires opting in via experimentalRawEvents.
 
-## A8. 次要对象：Claude Code 与 Gemini CLI — [research/08-related.md]
+## A8. Secondary subjects: Claude Code and Gemini CLI — [research/08-related.md]
 
-**Claude Code**：CLI 闭源（未做二进制审计）；权威协议面 = npm `@anthropic-ai/claude-agent-sdk` 的 `sdk.d.ts`（9451 行）。`SDKMessage` 38 成员 + **同一 JSON-Lines 信道上多路复用控制帧** `control_request/response/cancel_request`（37 子类型，sender-chosen request_id，KeepAlive）；`initialize` 响应带 `pending_permission_requests`（**mid-join 重放挂起审批**）与 `capabilities[]` 字符串能力协商；`can_use_tool` → `allow{updatedInput!}/deny{interrupt}`（**审批可改参数**）；6 种 permission mode；33 hook events；`stream_event` 包裹原始 API delta；`compact_boundary{trigger, pre_tokens, post_tokens, preserved_messages}`；后台任务事件族 + `stop_task`；`rewind_files`；interrupt 回执（`interrupt_receipt_v1`）。
-**Gemini CLI**：开源。核心事件 `ServerGeminiStreamEvent`（18 型 GeminiEventType，含 `LoopDetected`、`MaxSessionTurns`、`ContextWindowWillOverflow`）；事实 wire = `--output-format stream-json`（init/message/tool_use/tool_result/error/result）；调度器 7 状态机（validating→awaiting_approval→executing→…）；`ToolConfirmationOutcome` 7 值（含 `modify_with_editor`）；**确认的 ACP 适配器**（packages/cli/src/acp/）；压缩可见（`ChatCompressed`，0.5 阈值）；无 fork、无 interrupt 回执、无后台任务通知族。
-
----
-
-# Part B：Common Runtime Model（从实现中抽象）
-
-以下每条概念都有≥3 个实现的直接证据；标注了最强证据来源。
-
-**B1. Session = 不可变事件账本 + 身份 + resume。**
-DSH：append-only SessionEvent 日志、generation 永不改写 [01]；Pi：append-only JSONL 树（分支=移 leaf）[05]；Codex：rollout JSONL（append-only + ordinal）[03]；ZCode：SQLite + 事件溯源 + `reduce(transcript)≡reduce(events)` [02]；OpenCode：SQLite + EventV2 [04]；Claude：SessionStore/rewind [08]。**没有任何一家把"会话"实现为可变消息数组。**
-
-**B2. 客户端看到的是"投影事件流"，不是模型消息。**
-ZCode 是最自觉的实现（客户端只见 ConversationRow + 5 种 delta 操作 + StatePatch [02]）；DSH 用 SurfaceEventType/surfaceOp 区分模型面与日志面 [01]；Codex EventMsg 独立于 ResponseItem [03]；OpenCode Part/事件系统 [04]；ACP session/update [06]。**"模型 API 消息"与"Harness 运行时事件"的分离是全部实现的共同结构**——ARI 该标准化的是后者。
-
-**B3. Turn = 工作单元；Step = 一次模型调用。**
-DSH turn/step 双层事件 [01]；Codex turn/step [03]；OpenCode step-start/step-finish Part [04]；Pi turn_start/end [05]；ZCode turnHeader row [02]；Gemini MaxSessionTurns [08]。turn 有 ID/序号、有结局（见 B4）。
-
-**B4. 提交与完成解耦：prompt 回执 ≠ turn 结局。**
-DSH `session/prompt` 返回 durable enqueue receipt `messageId` [01]；Pi `agent_settled` vs `agent_end` [05]；OpenCode `session.idle` + `/wait` [04]；Claude `user_message_uuid` 绑定 + `result` 消息 [08]；ZCode 命令幂等键 + 队列/状态补丁 [02]；ACP v2 `state_update` [06]。**ARI 必须把"已接受"与"做完了"定义为两个语义。**
-
-**B5. 工具调用生命周期 = correlation id + 封闭状态机。**
-callID 关联：所有实现。状态机：OpenCode `pending→running→completed|error`（无 cancelled）[04]；ACP `pending→in_progress→completed|failed` [06]；ZCode toolCallRow 7 态（含 pendingApproval/backgrounded）[02]；Pi start/update/end + isError [05]；Codex Begin/End [03]。收敛形态：**started → (progress*) → completed|error**。
-
-**B6. 人机交互有两个不同通道：闭式审批 + 开放式提问。**
-闭式（decision-only）：DSH ApprovalOutcome [01]、Codex ReviewDecision [03]、ACP permission options [06]、OpenCode once/always/reject [04]、ZCode permission [02]、Gemini ToolConfirmationOutcome [08]。
-开放式（自由作答）：DSH user-questions [01]、OpenCode question.asked [04]、ZCode userInput [02]、Gemini ask_user confirmation [08]、Claude AskUserQuestion 工具。
-**把两者混成一个是设计错误**（DSH 明确分 seam）。
-
-**B7. 流式 = 有序增量事件 + 结算。**
-文本 delta：8/8。推理 delta：7/8（Claude 为 partial）。工具输出流：DSH(无)/ZCode(row.delta)/Codex(ExecCommandOutputDelta)/OpenCode(metadata per chunk)/Pi(partialResult)/Gemini/Claude——**粒度不一，但"增量+最终结算"双层结构一致**（DSH：transient chunk + durable settlement [01]；Pi：message_update + message_end [05]）。
-
-**B8. 取消是显式意图，且有因果。**
-DSH `cancel(cause)` [01]；Codex TurnAborted{4 reasons} [03]；ZCode stop [02]；OpenCode fiber cancel [04]；Pi abort [05]；ACP session/cancel + 请求级 `$/cancel_request` [06]；Claude interrupt+receipt [08]。
-
-**B9. Usage 是协议面的一部分。**
-8/8 有 token 计量；粒度分化（每消息 [01][05]、每 turn [07][08]、session 级 [06]）+ rate limits（Codex/Claude）。
-
-**B10. Compaction 是 Runtime 内部行为，但产生可见事件。**
-Claude compact_boundary、OpenCode session.compacted、Pi compaction_start/end、DSH compaction/* 事件、Codex ContextCompacted、Gemini ChatCompressed、ZCode Compact*。ACP 是唯一没有的（unstable）。**共识：算法私有，事件公开。**
-
-**B11. 能力协商 + 版本化。**
-ACP protocolVersion+capability 位 [06]；Claude capabilities[] [08]；ZCode HostCapabilities/clientMode [02]；DSH 版本协商缺失本身是反面教材（已知限制 [01]）。
-
-**B12. Mid-join / replay。**
-ACP session/load 全量重放 [06]；ZCode watermark snapshot|resume [02]；DSH projection snapshot + session/event 全量转发 [01]；Claude pending_permission_requests 重放 [08]；Codex rollout 重放 [03]。
-
-**B13. 工具集是 Runtime 资产，不是协议资产。**
-没有任何协议标准化工具体（ACP 只声明 promptCapabilities；Codex App Server 列工具但不定义语义；ZCode 每轮 disallowlist）。MCP 是工具接入的事实标准（8/8 集成）。**ARI 不定义工具，只定义工具调用的事件形状。**
-
-**最少概念集**（一个现代 Coding Agent Runtime 的"名词表"）：
-`Session`、`Event(seq)`、`Turn`、`Step(隐式)`、`Message delta`、`ToolCall(call_id, status)`、`Approval(decision)`、`Question(answer)`、`Cancellation(cause)`、`Usage`、`Compaction(事件)`、`Capability/Version`。
+**Claude Code**: the CLI is closed-source (no binary audit was performed); the authoritative protocol surface is the `sdk.d.ts` (9451 lines) of the npm package `@anthropic-ai/claude-agent-sdk`. `SDKMessage` has 38 members + **control frames multiplexed on the same JSON-Lines channel** `control_request/response/cancel_request` (37 subtypes, sender-chosen request_id, KeepAlive); the `initialize` response carries `pending_permission_requests` (**mid-join replay of pending approvals**) and `capabilities[]` string-based capability negotiation; `can_use_tool` → `allow{updatedInput!}/deny{interrupt}` (**approvals can rewrite arguments**); 6 permission modes; 33 hook events; `stream_event` wraps raw API deltas; `compact_boundary{trigger, pre_tokens, post_tokens, preserved_messages}`; a background-task event family + `stop_task`; `rewind_files`; interrupt receipt (`interrupt_receipt_v1`).
+**Gemini CLI**: open source. Core event `ServerGeminiStreamEvent` (18 GeminiEventType kinds, including `LoopDetected`, `MaxSessionTurns`, `ContextWindowWillOverflow`); the de facto wire format = `--output-format stream-json` (init/message/tool_use/tool_result/error/result); a 7-state scheduler state machine (validating→awaiting_approval→executing→…); `ToolConfirmationOutcome` has 7 values (including `modify_with_editor`); **a confirmed ACP adapter** (packages/cli/src/acp/); compaction is visible (`ChatCompressed`, 0.5 threshold); no fork, no interrupt receipt, no background-task notification family.
 
 ---
 
-# Part C：Divergence（差异与取舍）
+# Part B: Common Runtime Model (abstracted from the implementations)
 
-## C1. 必须标准化（所有实现都有，且语义可统一）
+Every concept below has direct evidence from at least 3 implementations; the strongest evidence source is cited.
 
-| 概念 | 依据 |
+**B1. Session = immutable event ledger + identity + resume.**
+DSH: append-only SessionEvent log, generations are never rewritten [01]; Pi: append-only JSONL tree (branching = moving the leaf) [05]; Codex: rollout JSONL (append-only + ordinal) [03]; ZCode: SQLite + event sourcing + `reduce(transcript)≡reduce(events)` [02]; OpenCode: SQLite + EventV2 [04]; Claude: SessionStore/rewind [08]. **No implementation implements a "session" as a mutable message array.**
+
+**B2. What the client sees is a "projected event stream", not model messages.**
+ZCode is the most deliberate implementation (the client sees only ConversationRow + 5 kinds of delta operations + StatePatch [02]); DSH uses SurfaceEventType/surfaceOp to separate the model surface from the log surface [01]; Codex EventMsg is independent of ResponseItem [03]; OpenCode Part/event system [04]; ACP session/update [06]. **The separation of "model API messages" from "harness runtime events" is a structure common to all implementations** — what ARI should standardize is the latter.
+
+**B3. Turn = unit of work; Step = one model call.**
+DSH turn/step two-layer events [01]; Codex turn/step [03]; OpenCode step-start/step-finish Part [04]; Pi turn_start/end [05]; ZCode turnHeader row [02]; Gemini MaxSessionTurns [08]. A turn has an ID/ordinal and an outcome (see B4).
+
+**B4. Submission and completion are decoupled: a prompt receipt ≠ the turn outcome.**
+DSH `session/prompt` returns a durable enqueue receipt `messageId` [01]; Pi `agent_settled` vs `agent_end` [05]; OpenCode `session.idle` + `/wait` [04]; Claude `user_message_uuid` binding + `result` message [08]; ZCode command idempotency key + queue/state patch [02]; ACP v2 `state_update` [06]. **ARI must define "accepted" and "done" as two distinct semantics.**
+
+**B5. Tool call lifecycle = correlation id + closed state machine.**
+callID correlation: all implementations. State machines: OpenCode `pending→running→completed|error` (no cancelled) [04]; ACP `pending→in_progress→completed|failed` [06]; ZCode toolCallRow with 7 states (including pendingApproval/backgrounded) [02]; Pi start/update/end + isError [05]; Codex Begin/End [03]. Convergent shape: **started → (progress*) → completed|error**.
+
+**B6. Human interaction has two distinct channels: closed-form approval + open-ended question.**
+Closed-form (decision-only): DSH ApprovalOutcome [01], Codex ReviewDecision [03], ACP permission options [06], OpenCode once/always/reject [04], ZCode permission [02], Gemini ToolConfirmationOutcome [08].
+Open-ended (free-form answer): DSH user-questions [01], OpenCode question.asked [04], ZCode userInput [02], Gemini ask_user confirmation [08], the Claude AskUserQuestion tool.
+**Merging the two into one is a design error** (DSH explicitly separates the seams).
+
+**B7. Streaming = ordered incremental events + settlement.**
+Text deltas: 8/8. Reasoning deltas: 7/8 (Claude is partial). Tool output streaming: DSH (none)/ZCode (row.delta)/Codex (ExecCommandOutputDelta)/OpenCode (metadata per chunk)/Pi (partialResult)/Gemini/Claude — **granularity differs, but the two-layer structure of "increments + final settlement" is consistent** (DSH: transient chunk + durable settlement [01]; Pi: message_update + message_end [05]).
+
+**B8. Cancellation is an explicit intent, and it carries a cause.**
+DSH `cancel(cause)` [01]; Codex TurnAborted{4 reasons} [03]; ZCode stop [02]; OpenCode fiber cancel [04]; Pi abort [05]; ACP session/cancel plus request-level `$/cancel_request` [06]; Claude interrupt + receipt [08].
+
+**B9. Usage is part of the protocol surface.**
+8/8 have token metering; granularity diverges (per message [01][05], per turn [07][08], session-level [06]) plus rate limits (Codex/Claude).
+
+**B10. Compaction is a Runtime-internal behavior, but it produces visible events.**
+Claude compact_boundary, OpenCode session.compacted, Pi compaction_start/end, DSH compaction/* events, Codex ContextCompacted, Gemini ChatCompressed, ZCode Compact*. ACP is the only one without them (unstable). **Consensus: the algorithm is private, the events are public.**
+
+**B11. Capability negotiation + versioning.**
+ACP protocolVersion + capability bits [06]; Claude capabilities[] [08]; ZCode HostCapabilities/clientMode [02]; DSH's lack of version negotiation is itself a cautionary counterexample (a known limitation [01]).
+
+**B12. Mid-join / replay.**
+ACP session/load full replay [06]; ZCode watermark snapshot|resume [02]; DSH projection snapshot + full session/event forwarding [01]; Claude pending_permission_requests replay [08]; Codex rollout replay [03].
+
+**B13. The tool set is a Runtime asset, not a protocol asset.**
+No protocol standardizes the tool set (ACP only declares promptCapabilities; Codex App Server lists tools but does not define their semantics; ZCode uses a per-turn disallowlist). MCP is the de facto standard for tool integration (8/8 integrate it). **ARI does not define tools; it only defines the event shape of tool calls.**
+
+**Minimal concept set** (the "noun list" of a modern Coding Agent Runtime):
+`Session`, `Event(seq)`, `Turn`, `Step(implicit)`, `Message delta`, `ToolCall(call_id, status)`, `Approval(decision)`, `Question(answer)`, `Cancellation(cause)`, `Usage`, `Compaction(event)`, `Capability/Version`.
+
+---
+
+# Part C: Divergence (differences and trade-offs)
+
+## C1. Must standardize (present in all implementations, and semantics can be unified)
+
+| Concept | Evidence |
 |---|---|
-| JSON-RPC 信封 + NDJSON 分帧（推荐 binding） | ACP/DSH SDK/Codex App Server/ZCode/Pi RPC/Claude 全部 line-delimited；唯一 HTTP 派 = OpenCode |
-| initialize + protocolVersion + capabilities | ACP/Claude/ZCode；DSH 缺失是已记录限制 |
-| session/new、resume、(list) | 8/8 |
-| prompt → 回执；status/idle → 完成 | B4 |
+| JSON-RPC envelope + NDJSON framing (recommended binding) | ACP/DSH SDK/Codex App Server/ZCode/Pi RPC/Claude are all line-delimited; the only HTTP outlier is OpenCode |
+| initialize + protocolVersion + capabilities | ACP/Claude/ZCode; DSH's lack of it is a documented limitation |
+| session/new, resume, (list) | 8/8 |
+| prompt → receipt; status/idle → completion | B4 |
 | turn.started/completed + stop_reason | B3/B4 |
 | message/reasoning delta | B7 |
-| tool started/updated/completed（call_id） | B5 |
-| approval.requested/respond（闭式枚举） | B6 |
+| tool started/updated/completed (call_id) | B5 |
+| approval.requested/respond (closed-form enum) | B6 |
 | session/cancel | B8 |
-| error 事件（含 stream/retry 语义） | Codex StreamError、Pi auto_retry、Claude api_retry、Gemini InvalidStream/Retry |
-| 每 session 单调 seq + replay 语义 | B12 |
+| error events (with stream/retry semantics) | Codex StreamError, Pi auto_retry, Claude api_retry, Gemini InvalidStream/Retry |
+| per-session monotonic seq + replay semantics | B12 |
 
-## C2. 应该标准化（多数有、形状略异，v0.x 内统一）
+## C2. Should standardize (present in most, shapes slightly differ; unify within v0.x)
 
-- **usage/updated**：粒度取"每 turn + 会话累计"（Codex [07]、Claude [08]、DSH [01]）。
-- **compaction/performed 事件**：仅通知（trigger + 可选 token 前后值，像 Claude compact_boundary [08]）。
-- **question/requested/respond**：开放式提问（DSH/OpenCode/ZCode 证据充分）。
-- **审批的会话级记忆**：`allow_always`（ACP kind、OpenCode always、Codex ApprovedForSession、Claude updatedPermissions）。
-- **审批参数改写**：`amended_input`（Claude updatedInput!、ZCode modifiedInput）——作为 capability flag（`approval.edit_input`），默认关闭。
-- **replay/mid-join 参数**：`session/resume {since}`（ZCode/ACP/Claude 证据）。
-- **fork**：Claude forkSession [08]、Codex fork [03]、DSH fork-at-turn-boundary [01]、Pi fork [05]、ZCode forkAssistant [02]、OpenCode fork [04]；Gemini/ACP 无。**已进 ARI 1.0** 为 `session/fork`（cap `fork`）。
+- **usage/updated**: granularity should be "per turn + session cumulative" (Codex [07], Claude [08], DSH [01]).
+- **compaction/performed event**: notification only (trigger + optional token before/after values, like Claude compact_boundary [08]).
+- **question/requested/respond**: open-ended questions (strong evidence from DSH/OpenCode/ZCode).
+- **Session-level memory for approvals**: `allow_always` (ACP kind, OpenCode always, Codex ApprovedForSession, Claude updatedPermissions).
+- **Approval-time argument rewriting**: `amended_input` (Claude updatedInput!, ZCode modifiedInput) — as a capability flag (`approval.edit_input`), off by default.
+- **replay/mid-join parameters**: `session/resume {since}` (evidence from ZCode/ACP/Claude).
+- **fork**: Claude forkSession [08], Codex fork [03], DSH fork-at-turn-boundary [01], Pi fork [05], ZCode forkAssistant [02], OpenCode fork [04]; Gemini/ACP have none. **Already in ARI 1.0** as `session/fork` (cap `fork`).
 
-## C3. 可以作为 capability（存在性强分化，强制会破坏"小协议"）
+## C3. Can be a capability (presence diverges strongly; mandating it would break the "small protocol")
 
-- **subagent**：Codex 原生 [03] / DSH provider [01] / ZCode 子 session+镜像 [02] / OpenCode 子 session 自订阅 [04] / Claude Task [08] vs Pi、ACP 明确不做 [05][06]。→ ARI 1.0 事件面（`subagent/started`、`subagent/finished` + 可选 child session attach）。
-- **background task**：DSH jobs 统一 [01]、Codex RunUserShellCommand [03]、ZCode backgroundWorks [02]、Claude task_* [08] vs OpenCode/Pi 弱、ACP 无。→ capability。
-- **terminal/PTY 桥**：OpenCode `/api/pty` [04]、DSH terminals [01]、Codex process/* [07] vs **ACP v1 client-exec 在 v2 被删除** [06]。→ 不进 core；terminal 生命周期经工具事件暴露即可。
-- **file change 结构化事件**：OpenCode file.edited+patch part [04]、Codex PatchApply/TurnDiff [03]、DSH fs/*+changes feed [01] vs Pi 仅 details.diff [05]。→ ARI 1.0 以 capability `fileChanges` 提供（事件 `file/changed`）。
-- **client tools 反转**（客户端当工具提供方）：ACP v1→v2 删除（反面证据）[06]；Codex dynamic_tools 存在 [07]。→ 不进 ARI 1.0。
-- **PTC**：见 C4。
+- **subagent**: Codex native [03] / DSH provider [01] / ZCode child session + mirroring [02] / OpenCode child session self-subscribing [04] / Claude Task [08] vs Pi and ACP explicitly not doing it [05][06]. → The ARI 1.0 event surface (`subagent/started`, `subagent/finished` + optional child session attach).
+- **background task**: DSH unified jobs [01], Codex RunUserShellCommand [03], ZCode backgroundWorks [02], Claude task_* [08] vs OpenCode/Pi weak, ACP none. → capability.
+- **terminal/PTY bridge**: OpenCode `/api/pty` [04], DSH terminals [01], Codex process/* [07] vs **ACP v1 client-exec was removed in v2** [06]. → Not in core; the terminal lifecycle only needs to be exposed via tool call events.
+- **Structured file change events**: OpenCode file.edited + patch part [04], Codex PatchApply/TurnDiff [03], DSH fs/* + changes feed [01] vs Pi only details.diff [05]. → Provided in ARI 1.0 as capability `fileChanges` (event `file/changed`).
+- **client tools inversion** (the client acts as the tool provider): deleted in ACP v1→v2 (counter-evidence) [06]; Codex dynamic_tools exists [07]. → Not in ARI 1.0.
+- **PTC**: see C4.
 
-## C4. 应完全留在 Runtime 内部（有证据支持"不该协议化"）
+## C4. Should stay entirely inside the Runtime (evidence supports "should not be protocolized")
 
-- **上下文装配/deriveMessages/系统提示组装**：全部私有（DSH system-prompt seam [01]、ZCode 投影 [02]、OpenCode system=env+AGENTS.md… [04]）。
-- **Compaction 算法/阈值**：私有；协议只有事件（B10）。DSH 的 shadowedSeqs 记账、Pi 的 firstKeptEntryId、OpenCode PRUNE_MINIMUM/PROTECT 都是内部细节。
-- **模型路由/重试策略/退避**：私有（Codex 5s→60s [03]、Pi 3 次 2s [05]、OpenCode RetryPart [04]）。协议只要求 `error{retryable?}` 语义。
-- **沙箱与工具执行世界**：私有（Codex SandboxPolicy [03]、DSH ctx.sandbox [01]）。协议不感知。
-- **PTC 执行**：判断 = **Runtime implementation detail**。证据：DSH 的桥接 sub-call 重入正常工具管线并发普通 `tool/ptc-dispatch` 事件 [01]；Codex Code Mode 嵌套调用经 ToolRouter 回到普通事件流 [03]；OpenCode code-mode 只编排 MCP 工具 [04]。**Shell 无需知道"程序在跑"，只需看到（已有的）工具事件**——最多加一个 `program_started/finished` 可选事件（扩展，不进 core）。
-- **Session 存储格式/generation/迁移**：私有（DSH vN [01]、Codex rollout [03]、ZCode SQLite [02]）。
-- **迭代上限/循环检测**：分化（Gemini MaxSessionTurns/LoopDetected [08]、ZCode signature streak [02]、OpenCode agent.steps [04]、DSH repeat-tool-reminder [01]、Codex/Pi 无）——语义上属 Runtime 自保，不是 Shell 关心的契约。
+- **Context assembly / deriveMessages / system prompt composition**: all private (DSH system-prompt seam [01], ZCode projection [02], OpenCode system=env+AGENTS.md… [04]).
+- **Compaction algorithms/thresholds**: private; the protocol only carries events (B10). DSH's shadowedSeqs bookkeeping, Pi's firstKeptEntryId, and OpenCode PRUNE_MINIMUM/PROTECT are all internal details.
+- **Model routing/retry policies/backoff**: private (Codex 5s→60s [03], Pi 3 times at 2s [05], OpenCode RetryPart [04]). The protocol only requires `error{retryable?}` semantics.
+- **Sandbox and tool execution world**: private (Codex SandboxPolicy [03], DSH ctx.sandbox [01]). Invisible to the protocol.
+- **PTC execution**: the verdict = **Runtime implementation detail**. Evidence: DSH's bridged sub-call re-enters the normal tool pipeline and emits an ordinary `tool/ptc-dispatch` event [01]; Codex Code Mode nested calls return to the ordinary event stream via ToolRouter [03]; OpenCode code-mode only orchestrates MCP tools [04]. **The shell does not need to know that "a program is running"; it only needs to see the (already existing) tool call events** — at most, add an optional `program_started/finished` event (an extension, not in core).
+- **Session storage format/generation/migration**: private (DSH vN [01], Codex rollout [03], ZCode SQLite [02]).
+- **Iteration limits/loop detection**: divergent (Gemini MaxSessionTurns/LoopDetected [08], ZCode signature streak [02], OpenCode agent.steps [04], DSH repeat-tool-reminder [01], Codex/Pi none) — semantically this is Runtime self-protection, not a contract the shell cares about.
 
 ---
 
-# Part D：ARI 1.0 提案（调研结论）
+# Part D: The ARI 1.0 Proposal (research conclusions)
 
-> 本部分是调研推导出的提案；**规范性版本为 [SPEC.md](SPEC.md)**，两者冲突时以 SPEC.md 为准。
+> This part is the proposal derived from the survey; **the normative version is [SPEC.md](SPEC.md)**, and where the two conflict, SPEC.md prevails.
 
-> 设计顺序遵守：源码 → 行为模型（Part A）→ 共同抽象（Part B）→ 必要能力（Part C）→ 才有本节。
-> 目标：**一个独立开发者几天内可实现**。ARI 1.0 全部核心 = **10 个请求方法 + 21 种事件 + 1 个握手**。
-> （计数更正：原稿写 13，但 D6 表实际列了 14 行——若把可派生的 `file/changed` 排除，核心恰为 13；本轮补入 `approval/resolved`、`question/resolved` 后为 **16 行 / 核心 15**。方法数"9"含 `initialized` 通知，请求方法为 8，见 D3/D4/D5。）
+> The design order follows: source code → behavioral model (Part A) → shared abstractions (Part B) → required capabilities (Part C) → and only then this section.
+> Goal: **implementable by a single independent developer within days**. The entirety of the ARI 1.0 core = **10 request methods + 21 event types + 1 handshake**.
+> (Count corrections: the draft said 13, but the D6 table actually lists 14 rows — if the derivable `file/changed` is excluded, the core is exactly 13; after this round adds `approval/resolved` and `question/resolved`, it is **16 rows / core 15**. The method count "9" includes the `initialized` notification; the request-method count is 8, see D3/D4/D5.)
 
-## D1. 原则
+## D1. Principles
 
-1. Protocol 与 Transport 解耦：核心 = 方法名 + payload schema + 排序/重放保证。
-2. 只标准化 B1–B12 的共同抽象；C3 一律 capability；C4 一律不碰。
-3. 不定义工具体、不定义 UI、不定义 Model Provider、不规定 Harness 内部（含 compaction/PTC/sandbox）。
-4. 可扩展性学 ACP/MCP：`_meta` 自由字段 + `_` 前缀保留；未知事件/字段必须被忽略（ZCode 的封闭投影 + ACP 的 open worlds 折中：**枚举封闭于 ARI 1.0，map 开放于 _meta**）。
+1. Protocol decoupled from Transport: the core = method names + payload schemas + ordering/replay guarantees.
+2. Standardize only the shared abstractions of B1–B12; C3 always becomes a capability; C4 is never touched.
+3. Do not define tool schemas, do not define the UI, do not define the Model Provider, do not prescribe Harness internals (including compaction/PTC/sandbox).
+4. Extensibility follows ACP/MCP: free-form `_meta` fields + the reserved `_` prefix; unknown events/fields must be ignored (a compromise between ZCode's closed projection and ACP's open worlds: **enumerations closed within ARI 1.0, maps open via _meta**).
 
 ## D2. Transport binding
 
-- **规范性 binding A（推荐）**：stdio 上的 **JSON-RPC 2.0，newline-delimited**（禁止嵌入换行；stdout 纯净性）。依据：6.5/8 个对象如此（ACP [06]、DSH SDK [01]、Codex App Server [07]、ZCode V4 命令面 [02]、Pi RPC [05]、Claude JSON-Lines [08]）。
-- **信息性 binding B**：HTTP + SSE（OpenCode 形态 [04]）：方法 = POST 路由，事件 = SSE 流。核心数据模型不变。
-- 不规定：Content-Length 分帧（ACP/Codex 均不用）、WebSocket、Unix socket（可作为未来 binding）。
+- **Normative binding A (recommended)**: **JSON-RPC 2.0 over stdio, newline-delimited** (embedded newlines forbidden; stdout purity). Evidence: 6.5/8 subjects do this (ACP [06], DSH SDK [01], Codex App Server [07], ZCode V4 command surface [02], Pi RPC [05], Claude JSON-Lines [08]).
+- **Informative binding B**: HTTP + SSE (the OpenCode shape [04]): methods = POST routes, events = SSE stream. The core data model is unchanged.
+- Not prescribed: Content-Length framing (used by neither ACP nor Codex), WebSocket, Unix socket (possible future bindings).
 
-## D3. 握手
+## D3. Handshake
 
 ```jsonc
 // client → server
 { "jsonrpc":"2.0", "id":1, "method":"initialize", "params":{
   "protocolVersion": 1,
   "clientInfo": { "name":"mini-shell", "version":"0.0.1" },
-  "clientCapabilities": { "replay": true }            // 可选能力位
+  "clientCapabilities": { "replay": true }            // optional capability bit
 }}
 // server → client
 { "jsonrpc":"2.0", "id":1, "result":{
-  "protocolVersion": 1,                                // 整数，MAJOR-only（ACP 证据 [06]）
+  "protocolVersion": 1,                                // integer, MAJOR-only (ACP evidence [06])
   "agentInfo": { "name":"SimpleAgent", "version":"0.1.0" },
   "agentCapabilities": {
-    "reasoning": true,          // 会发 reasoning/delta
-    "question": false,          // 支持开放式提问
-    "approvalEditInput": false, // 审批可带 amended_input（Claude/ZCode 证据）
+    "reasoning": true,          // will emit reasoning/delta
+    "question": false,          // supports open-ended questions
+    "approvalEditInput": false, // approvals may carry amended_input (Claude/ZCode evidence)
     "usage": true,
     "compactionEvents": true,
-    "replay": true,             // session/resume 支持 since
-    "fileChanges": false,       // 结构化 file/changed 事件
-    "subagents": false,         // cap: subagent/* 事件
-    "backgroundTasks": false,   // cap: background/* 事件
+    "replay": true,             // session/resume supports since
+    "fileChanges": false,       // structured file/changed events
+    "subagents": false,         // cap: subagent/* events
+    "backgroundTasks": false,   // cap: background/* events
     "fork": false,              // session/fork
     "sessionList": false        // session/list
   }
 }}
 ```
-**版本协商失败**（server 不支持所请求 MAJOR）：
+**Version negotiation failure** (server does not support the requested MAJOR):
 
 ```jsonc
 { "jsonrpc":"2.0", "id":1, "error":{ "code":-32008, "message":"unsupported protocol version",
   "data":{ "supportedVersions":[1] } } }
 ```
 
-- `protocolVersion` 为 **MAJOR-only 整数**（ACP 证据 [06]）；server 支持所请求 MAJOR ⇒ 正常应答（回自身 MAJOR）。
-- 不支持 ⇒ `-32008` + `data.supportedVersions`；**连接保持可用**，客户端可用受支持 MAJOR **重试一次** initialize。
-- 成功应答之前，除 `initialize` 外的一切方法 → `-32002`（版本重试窗口内亦然）。
-- 已 initialize 的连接再次 initialize ⇒ `-32006`（不重协商；重协商须重连）。
-- 客户端随后发 `initialized` 通知（对齐 ACP/Codex App Server）；**该通知不参与门控**——server 在 initialize 成功应答后即须接受其余方法，`initialized` 缺失不报错（避免为对齐 ACP 而引入无谓的失败模式）。
+- `protocolVersion` is a **MAJOR-only integer** (ACP evidence [06]); if the server supports the requested MAJOR ⇒ normal response (returning its own MAJOR).
+- Not supported ⇒ `-32008` + `data.supportedVersions`; **the connection remains usable**, and the client may **retry initialize once** with a supported MAJOR.
+- Before the successful response, every method other than `initialize` → `-32002` (likewise within the version-retry window).
+- initialize again on an already-initialized connection ⇒ `-32006` (no renegotiation; renegotiation requires a reconnect).
+- The client then sends the `initialized` notification (aligned with ACP/Codex App Server); **this notification does not participate in gating** — the server must accept the remaining methods as soon as it has sent the successful initialize response, and a missing `initialized` is not an error (avoiding a pointless failure mode introduced merely to align with ACP).
 
-## D4. Session 生命周期（client → server，7 个方法）
+## D4. Session lifecycle (client → server, 7 methods)
 
 ```jsonc
-session/new     { cwd?, meta? }                        → { sessionId, nextSeq }   // nextSeq = 下一条事件将用的序号，新会话为 1（原稿字段名 `seq`，与 resume 统一为 `nextSeq`）
+session/new     { cwd?, meta? }                        → { sessionId, nextSeq }   // nextSeq = the seq the next event will use; 1 for a new session (draft used the field name `seq`; unified with resume as `nextSeq`)
 session/resume  { sessionId, since? }                  → { sessionId, replayedFrom, nextSeq, events[], snapshot? }
-session/prompt  { sessionId, content: ContentBlock[] } → { messageId }        // durable 入队回执，≠ turn 结局（B4）
+session/prompt  { sessionId, content: ContentBlock[] } → { messageId }        // durable enqueue receipt, ≠ turn outcome (B4)
 session/cancel  { sessionId, cause? }                  → { cancelledTurn?, droppedMessageIds: string[] }
 session/fork    { sessionId, atTurn? }                 → { sessionId, nextSeq, forkedFrom }   // cap: fork
 session/list    { cwd? }                               → { sessions[] }                        // cap: sessionList
 shutdown        {}                                     → {}
 ```
-- **并发 prompt = 入队；不拒绝、也不隐式打断。** turn 运行中收到 `session/prompt` 一律接受并追加到该 session 的 **pending-input FIFO 队列**。`messageId` 的承诺范围严格是"**已持久入队**"——既不表示 turn 已开始，也不表示模型已看到。依据：ZCode 输入队列（`sendQueuedNow/editQueueItem/reorderQueueItem/deleteQueueItem/setAutoDrain`、`TurnMachine.queuePendingInput/drainPendingInputs` [02]）；DSH inbox 的 `nextTurn`+`nextStep` 双有序队列与 claim 语义 [01]。
-- **关联义务**：`turn/started` 必须携带 `messageIds: string[]`（该 turn 从队列 claim 的消息，可 ≥1 条——DSH 一次 claim 可领多条 [01]）。缺了它，回执在线上无法与任何事件关联，"已入队"不可验证。
-- **队列上限**：实现可设内部上限；超限时必须以 JSON-RPC 错误 `-32005` 拒绝该次 prompt，**不得静默丢弃**。
-- **中途转向（steer/inject）不在 ARI 1.0**：DSH `steer()`（最近 step 边界消费）/`followup()`/`inject()` 与 ZCode 的 guide-vs-queue 分化过大 [01][02] → 走扩展（SPEC §12）。
-- `since` 省略 = 从头重放。**`since` 超出保留窗口不是错误**：server 必须退化为"`snapshot` + 自保留基点起的全部 `events`"，并用 `replayedFrom` 标明基点（ZCode 由 server 在 `snapshot | resume` 间选模式 [02]）。仅当 server 完全无日志（`replay:false`）时才回 `-32004`。
-- `since` > 当前水位（未来序号）⇒ `-32602`（客户端 bug，不静默纠正）。
-- **resume 的一致性切面**：应答 `events` 的最后一条 seq < `nextSeq`；此后同一 session 的实时事件 seq ≥ `nextSeq`，**不重不漏**（watermark 语义，ZCode [02]）。
-- **`snapshot` schema**（重连重建 live UI 的最小投影；ZCode StatePatch / Claude SessionState 同构 [02][08]）：
+- **Concurrent prompts = enqueue; never rejected, never implicitly interrupted.** A `session/prompt` received while a turn is running is always accepted and appended to that session's **pending-input FIFO queue**. The scope of the `messageId` promise is strictly "**durably enqueued**" — it means neither that the turn has started nor that the model has seen it. Evidence: the ZCode input queue (`sendQueuedNow/editQueueItem/reorderQueueItem/deleteQueueItem/setAutoDrain`, `TurnMachine.queuePendingInput/drainPendingInputs` [02]); the DSH inbox's `nextTurn`+`nextStep` dual ordered queues and claim semantics [01].
+- **Correlation obligation**: `turn/started` must carry `messageIds: string[]` (the messages that turn claimed from the queue; may be ≥1 — a single DSH claim can take multiple [01]). Without it, the receipt cannot be correlated on the wire with any event, and "enqueued" is unverifiable.
+- **Queue limit**: implementations may set an internal cap; when it is exceeded, that prompt must be rejected with JSON-RPC error `-32005`, **never silently dropped**.
+- **Mid-turn steering (steer/inject) is not in ARI 1.0**: DSH `steer()` (consumed at the nearest step boundary)/`followup()`/`inject()` and ZCode's guide-vs-queue split diverge too much [01][02] → goes through extensions (SPEC §12).
+- Omitted `since` = replay from the beginning. **`since` beyond the retention window is not an error**: the server must degrade to "`snapshot` + all `events` from the retention baseline", marking the baseline with `replayedFrom` (in ZCode the server chooses between `snapshot | resume` modes [02]). `-32004` is returned only when the server has no log at all (`replay:false`).
+- `since` > the current watermark (a future seq) ⇒ `-32602` (a client bug; not silently corrected).
+- **Conformance seam of resume**: the last seq among the response's `events` < `nextSeq`; live events for the same session thereafter have seq ≥ `nextSeq`, **no gaps and no duplicates** (watermark semantics, ZCode [02]).
+- **The `snapshot` schema** (the minimal projection for rebuilding the live UI after a reconnect; isomorphic to ZCode StatePatch / Claude SessionState [02][08]):
 
 ```jsonc
 { "status":"running"|"idle", "nextTurn":2,
@@ -279,122 +279,122 @@ shutdown        {}                                     → {}
   "usage":{ "inputTokens":0, "outputTokens":0 } }
 ```
 
-- **订阅模型（ARI 1.0 = 隐式订阅）**：连接对"本连接上 `session/new` 或 `session/resume` 成功的每个 session"自动订阅 `event`，**无需 subscribe 方法**；唯一退订 = 关闭连接。同一 session 允许多连接（Codex App Server 多连接 fan-out [07]）：事件广播到全部订阅连接，任一连接上的 `approval/respond` 对全体生效。
-- **顺序保证**：`session/prompt` 的应答必须先于"由该 prompt 引起的任何事件"发出（否则 Shell 无法归属事件）；其他来源（先前入队消息、后台工作）的事件可与之交错。跨 session 无序，但同一 session 在所有连接上按 seq 一致投递。
-- **cancel 语义**：只作用于**当前在飞 turn**，并**清空尚未 claim 的 pending-input 队列**——即真正的停止；否则队列会立刻重启工作，Ctrl-C 形同虚设。被取消 turn 必须结算为 `turn/completed{stopReason:"cancelled"}`；被丢弃的入队消息经应答 `droppedMessageIds` 与 `snapshot.queue` 可观测，不另发事件。无在飞 turn 时 cancel 为幂等空操作。`cause` 为可选不透明字符串，ARI 1.0 不设闭式枚举（Codex 的 4 种 reason 属 runtime 内部 [03]）。
-- `shutdown`：client→server 请求；应答后 server **不得再发事件**，在飞 turn 直接放弃——这是 D9-I1 结算不变量的**唯一豁免**——并应在有限时间内退出。
-- `ContentBlock` 在 ARI 1.0 仅 `{"type":"text","text":string}`；`image` 等作为 capability 扩展（ACP/MCP 同款教训：基线最小）。
-- `session/list`（capability `sessionList`）与 `session/fork`（capability `fork`）见 SPEC §7.5–7.6。
+- **Subscription model (ARI 1.0 = implicit subscription)**: a connection is automatically subscribed to `event` for "every session whose `session/new` or `session/resume` succeeded on this connection", **with no subscribe method**; the only unsubscribe = closing the connection. Multiple connections per session are allowed (Codex App Server multi-connection fan-out [07]): events are broadcast to all subscribed connections, and `approval/respond` on any connection takes effect across all of them.
+- **Ordering guarantee**: the response to `session/prompt` must be emitted before "any event caused by that prompt" (otherwise the Shell cannot attribute events); events from other sources (previously enqueued messages, background work) may interleave with them. Across sessions there is no ordering, but the same session is delivered in seq order consistently on all connections.
+- **cancel semantics**: acts only on the **current in-flight turn** and **clears the pending-input queue of not-yet-claimed messages** — i.e., a real stop; otherwise the queue would immediately restart work and Ctrl-C would be an empty gesture. A cancelled turn must settle as `turn/completed{stopReason:"cancelled"}`; dropped enqueued messages are observable via the response's `droppedMessageIds` and `snapshot.queue`, with no extra events. With no in-flight turn, cancel is an idempotent no-op. `cause` is an optional opaque string; ARI 1.0 defines no closed-form enumeration for it (Codex's 4 reasons are runtime-internal [03]).
+- `shutdown`: a client→server request; after the response the server **must not emit any more events** and abandons the in-flight turn outright — this is the **only exemption** from the D9-I1 settlement invariant — and it should exit within finite time.
+- In ARI 1.0 `ContentBlock` is only `{"type":"text","text":string}`; `image` etc. are capability extensions (the same lesson as ACP/MCP: keep the baseline minimal).
+- `session/list` (capability `sessionList`) and `session/fork` (capability `fork`) are covered in SPEC §7.5–7.6.
 
-## D5. 人机交互（2 个方法）
+## D5. Human-in-the-loop interactions (2 methods)
 
 ```jsonc
 approval/respond { sessionId, approvalId,
   decision: "allow_once" | "allow_always" | "deny",
-  amendedInput? }                                    → {}   // amendedInput 仅当 agentCapabilities.approvalEditInput
+  amendedInput? }                                    → {}   // amendedInput only when agentCapabilities.approvalEditInput
 question/respond { sessionId, questionId,
-  answers: [{ id, values: string[] }] }              → {}   // 仅当 agentCapabilities.question
+  answers: [{ id, values: string[] }] }              → {}   // only when agentCapabilities.question
 ```
-决策枚举取各方交集：`allow_once`（DSH allowed-once [01]、ACP allow_once [06]、OpenCode once [04]）、`allow_always`（ACP/OpenCode/Codex ApprovedForSession [03][06]）、`deny`（全部）。参数改写（Claude updatedInput [08]、ZCode modifiedInput [02]）与"拒绝+反馈文本"（OpenCode [04]）都不进 ARI 1.0 枚举——前者走 capability，后者 Shell 可自行再发一条 prompt。
+The decision enumeration is the intersection across all parties: `allow_once` (DSH allowed-once [01], ACP allow_once [06], OpenCode once [04]), `allow_always` (ACP/OpenCode/Codex ApprovedForSession [03][06]), `deny` (all). Parameter rewriting (Claude updatedInput [08], ZCode modifiedInput [02]) and "deny + feedback text" (OpenCode [04]) do not enter the ARI 1.0 enumeration — the former goes through a capability; for the latter the Shell can simply send another prompt itself.
 
-**形状与约束**（补 review 指出的"options 无 schema、提问无拒绝表示、跨断线时效"）：
+**Shapes and constraints** (closing the gaps the review pointed out: "options had no schema, questions had no way to decline, validity across disconnects"):
 
-- `approval/requested.options`（缺省 = 上述三枚举）：`[{ id:"allow_once"|"allow_always"|"deny", label: string }]`。**客户端不得发送未出现在 options 中的 decision**（server 不想要 `allow_always` 就不下发它，无需新增能力位）；违反 ⇒ `-32602`。
-- `question/requested.questions`：`[{ id, question, detail?, options?: [{ id, label, detail? }], multiSelect?: boolean }]`；`options` 缺省 = 自由文本作答（`values` 为字符串数组）。**`answers: []` = 显式整体放弃作答**；未出现在 `answers` 里的 question 视为跳过——补上了原稿缺失的"拒绝/跳过"表示。
-- **幂等与终局**：每个 `approval/requested`/`question/requested` 以**恰好一个** `*/resolved` 事件终结（D6/D9-I7）。server 必须为每个 id 记住最后一次终局：**同 id + 同 decision 重发 ⇒ 幂等返回 `{}`**（网络重试安全）；**同 id + 不同 decision，或 id 不存在 ⇒ `-32007`**。
-- **跨断线时效（B12 的落地）**：挂起交互在 session 存活期间**跨断线保持有效，且不换 id**——重放出的 `approval/requested` 与断线前是同一条 live 请求，Shell 按 id 去重即可；运行时**不得静默过期**，若自行兜底（超时、fail-closed 断连）必须发 `approval/resolved{decision:"expired"|"cancelled"}`（提问侧 `outcome:"expired"`）。重连后的挂起集另由 `snapshot.pendingApprovals/pendingQuestions` 给出（D4），两条通道对同一 id 必须一致。依据：Claude `initialize` 重放 `pending_permission_requests` [08]；ZCode `pendingInteractions` + `resolveInteraction` [02]；DSH fail-closed `unavailable` [01]。
+- `approval/requested.options` (default = the three-value enumeration above): `[{ id:"allow_once"|"allow_always"|"deny", label: string }]`. **The client must not send a decision that does not appear in options** (if the server does not want `allow_always`, it simply omits it — no new capability bit needed); violation ⇒ `-32602`.
+- `question/requested.questions`: `[{ id, question, detail?, options?: [{ id, label, detail? }], multiSelect?: boolean }]`; `options` omitted = free-text answering (`values` is an array of strings). **`answers: []` = an explicit overall decline to answer**; a question absent from `answers` is treated as skipped — this adds the "decline/skip" representation missing from the draft.
+- **Idempotence and finality**: each `approval/requested`/`question/requested` is terminated by **exactly one** `*/resolved` event (D6/D9-I7). The server must remember the last final outcome for each id: **same id + same decision resent ⇒ idempotent return of `{}`** (safe under network retries); **same id + a different decision, or a nonexistent id ⇒ `-32007`**.
+- **Validity across disconnects (the landing of B12)**: pending interactions **remain valid across disconnects for as long as the session lives, and keep their id** — the `approval/requested` replayed after a reconnect is the same live request as before the disconnect, so the Shell just deduplicates by id; the runtime **must not silently expire** them, and if it applies its own fallback (timeout, fail-closed on disconnect) it must emit `approval/resolved{decision:"expired"|"cancelled"}` (on the question side, `outcome:"expired"`). The pending set after a reconnect is given separately by `snapshot.pendingApprovals/pendingQuestions` (D4); the two channels must agree on the same id. Evidence: Claude `initialize` replays `pending_permission_requests` [08]; ZCode `pendingInteractions` + `resolveInteraction` [02]; DSH fail-closed `unavailable` [01].
 
-## D6. 事件流（server → client，1 个通知通道）
+## D6. Event stream (server → client, 1 notification channel)
 
-统一信封（对齐 ZCode 投影 + DSH session.event + Codex 三级坐标）：
+Unified envelope (aligned with the ZCode projection + DSH session.event + Codex's three-level coordinates):
 
 ```jsonc
 { "jsonrpc":"2.0", "method":"event",
   "params": { "sessionId": string, "seq": integer, "type": string, ...payload } }
 ```
-- **ID / 序号类型（原稿未定义）**：`sessionId`/`messageId`/`callId`/`approvalId`/`questionId` = **不透明字符串**（建议 `s_`/`m_`/`t_`/`ap_`/`q_` + ULID）；`seq` = 整数，**1 起**、每 session 单调 +1、无空洞；`turn` = 整数，**1 起**、每 session 单调 +1（DSH/Codex ordinal 语义 [01][03]）。
-- **seq 起点 = 1**：新 session 首条事件 seq=1；`session/new` 返回的 `seq` 即"下一条将使用的序号"（新会话 = 1）。**重放事件与实时事件共用同一 seq 空间**，故 Example 3 的 `since` 语义无歧义。
-- **单帧上限（binding A）**：任一 NDJSON 行 ≤ **1 MiB**（1,048,576 字节，不含换行）。超限 payload 必须在**事件层**拆分，绝不切 JSON 值：工具大输出先以 `tool/updated.outputDelta` 分块（每块 ≤1 MiB）流式下发，`tool/completed.output` 此时应为空或摘要，完整载荷放 `meta`/`outputRef`。依据：ZCode >1MiB 帧分片 [02]、Pi 背压感知 [05]。写入侧必须施加背压（阻塞写）而非无界缓冲（Pi [05]）。
-- 事件类型（ARI 1.0 全集，21 种 = 10 必需 + 11 能力门控）：
+- **ID / sequence types (undefined in the draft)**: `sessionId`/`messageId`/`callId`/`approvalId`/`questionId` = **opaque strings** (recommended: `s_`/`m_`/`t_`/`ap_`/`q_` + ULID); `seq` = integer, **starting at 1**, monotonic +1 per session, no gaps; `turn` = integer, **starting at 1**, monotonic +1 per session (DSH/Codex ordinal semantics [01][03]).
+- **seq starts at 1**: the first event of a new session has seq=1; the `seq` returned by `session/new` is "the seq the next event will use" (1 for a new session). **Replayed events and live events share the same seq space**, so the `since` semantics of Example 3 are unambiguous.
+- **Per-frame limit (binding A)**: any NDJSON line ≤ **1 MiB** (1,048,576 bytes, excluding the newline). Oversized payloads must be split at the **event layer**, never by cutting a JSON value: large tool output is first streamed in chunks via `tool/updated.outputDelta` (each chunk ≤1 MiB), `tool/completed.output` is then empty or a summary, and the full payload goes into `meta`/`outputRef`. Evidence: ZCode >1MiB frame splitting [02], Pi's backpressure awareness [05]. The writing side must apply backpressure (blocking writes) rather than unbounded buffering (Pi [05]).
+- Event types (the full ARI 1.0 set, 21 = 10 required + 11 capability-gated):
 
-| type | payload 要点 | 对应证据 |
+| type | payload essentials | corresponding evidence |
 |---|---|---|
-| `session/status` | `status: "running"\|"idle"`；idle 即 Pi `agent_settled` 语义（重试/队列均结束） | [01][04][05] |
-| `turn/started` | `turn, messageIds: string[]`（该 turn claim 的入队消息，D4 关联义务） | [01][03][05] |
+| `session/status` | `status: "running"\|"idle"`; idle is Pi's `agent_settled` semantics (retries/queue all finished) | [01][04][05] |
+| `turn/started` | `turn, messageIds: string[]` (the enqueued messages claimed by that turn, the D4 correlation obligation) | [01][03][05] |
 | `turn/completed` | `turn, stopReason: end_turn\|max_tokens\|cancelled\|refusal\|error` | [03][06][08] |
-| `message/delta` | `turn?, text`（assistant 文本增量） | 8/8 |
-| `reasoning/delta` | `turn?, text`（cap: reasoning） | 7/8 |
+| `message/delta` | `turn?, text` (assistant text deltas) | 8/8 |
+| `reasoning/delta` | `turn?, text` (cap: reasoning) | 7/8 |
 | `tool/started` | `turn?, callId, name, input?` | B5 |
 | `tool/updated` | `callId, status: "pending"\|"running", title?, outputDelta?` | [02][04][05] |
-| `tool/completed` | `callId, status: "success"\|"error", output?, meta?`（meta 不透明，UI 载荷） | [01][05] |
-| `approval/requested` | `approvalId, toolCallId?, toolName?, reason?, options?`（options 缺省 = 三枚举） | B6 |
-| `approval/resolved` | `approvalId, decision: "allow_once"\|"allow_always"\|"deny"\|"expired"\|"cancelled"`（每个 requested **恰好一条**） | [02][03][06] |
-| `question/requested` | `questionId, questions[{id, question, detail?, options?, multiSelect?}]`（cap: question） | [01][04] |
-| `question/resolved` | `questionId, outcome: "answered"\|"declined"\|"expired"`（cap: question；每个 requested **恰好一条**） | [01][04] |
+| `tool/completed` | `callId, status: "success"\|"error", output?, meta?` (meta opaque, a UI payload) | [01][05] |
+| `approval/requested` | `approvalId, toolCallId?, toolName?, reason?, options?` (options omitted = the three-value enumeration) | B6 |
+| `approval/resolved` | `approvalId, decision: "allow_once"\|"allow_always"\|"deny"\|"expired"\|"cancelled"` (exactly **one** per requested) | [02][03][06] |
+| `question/requested` | `questionId, questions[{id, question, detail?, options?, multiSelect?}]` (cap: question) | [01][04] |
+| `question/resolved` | `questionId, outcome: "answered"\|"declined"\|"expired"` (cap: question; exactly **one** per requested) | [01][04] |
 | `usage/updated` | `turn?, usage{inputTokens, outputTokens, cachedTokens?, reasoningTokens?, cost?}` | B9 |
-| `compaction/performed` | `trigger: "manual"\|"auto"\|"overflow", preTokens?, postTokens?`（cap: compactionEvents） | B10 |
-| `file/changed` | `path, kind: "create"\|"modify"\|"delete"\|"rename", diff?`（cap: fileChanges） | C3 |
-| `subagent/started` | `callId?, childSessionId?, name?`（cap: subagents；只标准事件面，编排不在协议内。**字段名不能叫 `sessionId`**，会覆盖信封的同名字段） | [01][02][03][04][08] |
-| `subagent/finished` | `callId?, childSessionId?, status: "success"\|"error"\|"cancelled", summary?`（cap: subagents） | 同上 |
-| `background/started` | `taskId, title?`（cap: backgroundTasks；无控制 API） | [01][02][03][08] |
-| `background/updated` | `taskId, status: "running"\|"pending", title?, outputDelta?`（cap: backgroundTasks） | 同上 |
-| `background/finished` | `taskId, status: "success"\|"error"\|"cancelled", output?`（cap: backgroundTasks） | 同上 |
+| `compaction/performed` | `trigger: "manual"\|"auto"\|"overflow", preTokens?, postTokens?` (cap: compactionEvents) | B10 |
+| `file/changed` | `path, kind: "create"\|"modify"\|"delete"\|"rename", diff?` (cap: fileChanges) | C3 |
+| `subagent/started` | `callId?, childSessionId?, name?` (cap: subagents; only the event surface is standardized — orchestration is not in the protocol. **The field must not be named `sessionId`** — it would shadow the envelope's same-named field) | [01][02][03][04][08] |
+| `subagent/finished` | `callId?, childSessionId?, status: "success"\|"error"\|"cancelled", summary?` (cap: subagents) | same as above |
+| `background/started` | `taskId, title?` (cap: backgroundTasks; no control API) | [01][02][03][08] |
+| `background/updated` | `taskId, status: "running"\|"pending", title?, outputDelta?` (cap: backgroundTasks) | same as above |
+| `background/finished` | `taskId, status: "success"\|"error"\|"cancelled", output?` (cap: backgroundTasks) | same as above |
 | `session/error` | `error{ code, message, retryable? }` | B8/C2 |
 
-- **排序**：单 session 内严格按 seq；跨 session 无序。同一 session 在所有订阅连接上按 seq 一致投递（D4 订阅模型）。
-- **pending 状态可推导**：`approval/requested` 未收到对应 `approval/resolved` = waiting；断线重连后由 `snapshot.pendingApprovals/pendingQuestions` 给出当前挂起集（Claude SessionState `requires_action` [08] 与 ACP v2 同构，可后加）。**原稿"不需要额外 state 位"的说法只在单连接、不重连时成立**——正是 `*/resolved` 事件（+ snapshot）让这条在断线场景下也成立，这也是本次唯一新增事件类型的原因（见 D9-I7）。
+- **Ordering**: strictly by seq within a single session; unordered across sessions. The same session is delivered in seq order consistently on all subscribed connections (the D4 subscription model).
+- **Pending state is derivable**: an `approval/requested` with no corresponding `approval/resolved` = waiting; after a reconnect the current pending set is given by `snapshot.pendingApprovals/pendingQuestions` (isomorphic to Claude SessionState `requires_action` [08] and ACP v2; can be added later). **The draft's claim that "no extra state bit is needed" holds only for a single connection that never reconnects** — it is precisely the `*/resolved` events (+ snapshot) that make this hold in the disconnect scenario too, which is also why they are the only event types added this round (see D9-I7).
 
-## D7. 明确不进 ARI 1.0 的（附理由）
+## D7. Explicitly excluded from ARI 1.0 (with reasons)
 
-| 排除项 | 理由（证据） |
+| Excluded item | Reason (evidence) |
 |---|---|
-| 工具体/schema 标准化 | B13；MCP 已解决工具接入，勿重复 |
-| client tools 反转（fs/terminal 回调） | ACP v2 删除该面 [06]；Codex dynamic_tools 留在自家 [07] |
-| PTC 事件/控制 | C4：runtime detail；桥接调用已是普通工具事件 [01][03] |
-| subagent 编排 | C3：分化最大；1.0 只标准化事件面，编排走扩展 |
-| 后台任务控制 | C3：1.0 只标准化事件面，控制走扩展 |
-| 终端桥（PTY 透传/输出订阅） | C3：ACP v2 反向证据；runtime 自有 UI 通道 [04][01] |
-| compaction 控制（手动触发/参数） | Codex App Server 都"不可参数化" [07]；DSH 有手动命令但属 human command 而非协议 [01] |
-| 审批策略修正（execpolicy amendment） | Codex 特有 [03][07]，封闭枚举放不下；走扩展（SPEC §12） |
-| 模型/权限模式设置 | Claude set_permission_mode/set_model [08]、ZCode switchCollaborationMode [02] 属产品面；用 `session/new meta` 一次性声明即可 |
+| Tool schemas/schema standardization | B13; MCP already solved tool integration, do not duplicate it |
+| client tools inversion (fs/terminal callbacks) | ACP v2 removed that surface [06]; Codex keeps dynamic_tools in-house [07] |
+| PTC events/control | C4: runtime detail; bridged calls are already ordinary tool events [01][03] |
+| subagent orchestration | C3: the greatest divergence; 1.0 standardizes only the event surface, orchestration goes through extensions |
+| background task control | C3: 1.0 standardizes only the event surface, control goes through extensions |
+| terminal bridge (PTY passthrough/output subscription) | C3: counter-evidence from ACP v2; the runtime has its own UI channel [04][01] |
+| compaction control (manual trigger/parameters) | even the Codex App Server is "not parameterizable" [07]; DSH has a manual command but it is a human command, not protocol [01] |
+| approval policy amendment (execpolicy amendment) | Codex-specific [03][07]; does not fit a closed enumeration; goes through extensions (SPEC §12) |
+| model/permission-mode settings | Claude set_permission_mode/set_model [08] and ZCode switchCollaborationMode [02] are product surface; a one-time declaration via `session/new meta` suffices |
 
-## D8. "几天实现"自检
+## D8. The "implementable in days" self-check
 
-一个 ARI 1.0 兼容 Runtime 的最小义务：stdin JSONL 解析（~50 行）+ initialize/会话三方法/两个 respond 方法（~100 行）+ 把自己的循环事件映射到 21 种事件（~100 行）+ cancel。**无账本、无 compaction、无 subagent 的 SimpleAgent 也能合规**——只要它如实声明 capabilities（不发布 compaction 事件、`compactionEvents:false`）。反向自检：DSH/Codex/ZCode 的现有协议面到 ARI 1.0 的映射都是"改信封、不改语义"级别（见 Example 4）。
+The minimal obligations of an ARI 1.0-conformant Runtime: stdin JSONL parsing (~50 lines) + initialize/the three session methods/the two respond methods (~100 lines) + mapping its own loop events onto the 21 event types (~100 lines) + cancel. **A SimpleAgent with no ledger, no compaction, and no subagents can still conform** — as long as it declares its capabilities truthfully (publishes no compaction events, `compactionEvents:false`). Reverse self-check: mapping the existing protocol surfaces of DSH/Codex/ZCode onto ARI 1.0 is everywhere at the level of "change the envelope, not the semantics" (see Example 4).
 
-## D9. 结算不变量与错误码（回答"该监听哪个事件收尾"）
+## D9. Settlement invariants and error codes (answering "which event to listen to when wrapping up")
 
-### D9.1 turn 结算不变量
+### D9.1 Turn settlement invariants
 
-- **I1（结算）**：同一 session 内，每个 `turn/started` **最终恰好**对应一条 `turn/completed`——无论中途发生 error、cancel、审批拒绝还是工具失败。**唯一豁免**：连接/进程终止（`shutdown` 或崩溃），此时在飞 turn 不再结算，Shell 以连接关闭为准（D4）。
-- **I2（error 不替代结算）**：`session/error` 是**带外诊断**，永不替代 `turn/completed`。致命错误也必须以 `turn/completed{stopReason:"error"}` 收尾。这是原稿最缺的一条：实现者应监听 `turn/completed` 收尾、`session/error` 取诊断，二者不可互相顶替。
-- **I3（顺序）**：致命错误先发 `session/error`，紧接 `turn/completed{stopReason:"error"}`——只监听 `turn/completed` 的极简 Shell（D8 的 SimpleAgent 正是此情形）也能正确收尾。
-- **I4（可重试错误不结束 turn）**：`session/error{retryable:true}` 表示运行时将自行重试，**不要求** turn 结束；同一 turn 可出现多条。Codex `StreamError`+5s→60s 退避 [03]、Pi `auto_retry_*` [05]、Claude `api_retry` [08]、Gemini `InvalidStream/Retry` [08] 均为此形态。
-- **I5（无 turn 的 error）**：`session/error.turn?` 可缺省——错误可发生在任何 turn 之前（prompt 校验失败、模型不可达等）。`session/error` 不带 `turn` 时，Shell 不得假定存在在飞 turn。
-- **I6（不卡 running）**：任何终止路径之后 session 必须达到 `session/status:"idle"`；idle 即 Pi `agent_settled` 语义（重试/队列全部结束）[05]，Shell 以此判定"不会再自动干活"。
-- **I7（交互终局）**：每个 `approval/requested`/`question/requested` 恰好一条 `*/resolved`（D5）。
+- **I1 (settlement)**: within the same session, every `turn/started` is **eventually matched by exactly one** `turn/completed` — regardless of an error, cancel, approval denial, or tool failure along the way. **The only exemption**: connection/process termination (`shutdown` or crash), in which case the in-flight turn is no longer settled and the Shell takes connection closure as final (D4).
+- **I2 (error does not replace settlement)**: `session/error` is an **out-of-band diagnostic** and never substitutes for `turn/completed`. Even a fatal error must end with `turn/completed{stopReason:"error"}`. This is the item most missing from the draft: implementers should listen to `turn/completed` for wrap-up and to `session/error` for diagnostics; the two must not stand in for each other.
+- **I3 (ordering)**: on a fatal error, emit `session/error` first, immediately followed by `turn/completed{stopReason:"error"}` — then even a minimal Shell that listens only to `turn/completed` (the SimpleAgent of D8 is exactly this case) wraps up correctly.
+- **I4 (retryable errors do not end the turn)**: `session/error{retryable:true}` means the runtime will retry on its own and **does not require** the turn to end; several may occur within the same turn. Codex `StreamError` with 5s→60s backoff [03], Pi `auto_retry_*` [05], Claude `api_retry` [08], and Gemini `InvalidStream/Retry` [08] all have this shape.
+- **I5 (error without a turn)**: `session/error.turn?` may be omitted — errors can occur before any turn (prompt validation failure, model unreachable, etc.). When `session/error` carries no `turn`, the Shell must not assume an in-flight turn exists.
+- **I6 (never stuck in running)**: after any termination path the session must reach `session/status:"idle"`; idle is Pi's `agent_settled` semantics (retries/queue all finished) [05], and the Shell uses it to conclude that "no more work will happen on its own".
+- **I7 (interaction finality)**: each `approval/requested`/`question/requested` gets exactly one `*/resolved` (D5).
 
-### D9.2 错误码表
+### D9.2 Error code table
 
-| code | 名称 | 触发 | 可重试 |
+| code | Name | Trigger | Retryable |
 |---|---|---|---|
-| -32700 / -32600 / -32601 / -32602 / -32603 | JSON-RPC 标准 | 解析 / 请求 / 方法 / 参数 / 内部 | 视情况 |
-| -32001 | `session_not_found` | `sessionId` 未知（prompt/resume/cancel/respond 一致，**不自动建会话**） | 否 |
-| -32002 | `not_initialized` | initialize 成功应答前调用任何方法（含版本重试窗口内） | 是（先 initialize） |
-| -32003 | `unsupported_capability` | 使用 agentCapabilities 声明为 false 的方法/参数（如 `amendedInput`、`question/respond`） | 否 |
-| -32004 | `replay_unavailable` | `replay:false`，或服务端完全无日志可回放 | 否 |
-| -32005 | `queue_full` | pending-input 队列超实现上限（**不得静默丢弃**） | 是（稍后重发） |
-| -32006 | `already_initialized` | 已 initialize 的连接再次 initialize（重协商须重连） | 否 |
-| -32007 | `unknown_interaction` | `approvalId`/`questionId` 不存在，或**以不同 decision 重复作答**已终结交互 | 否 |
-| -32008 | `unsupported_protocol_version` | initialize 请求的 MAJOR 不受支持（`data.supportedVersions`） | 是（换版本重试一次） |
+| -32700 / -32600 / -32601 / -32602 / -32603 | JSON-RPC standard | parse / request / method / params / internal | as applicable |
+| -32001 | `session_not_found` | `sessionId` unknown (consistent across prompt/resume/cancel/respond; **no automatic session creation**) | No |
+| -32002 | `not_initialized` | any method called before the successful initialize response (including within the version-retry window) | Yes (initialize first) |
+| -32003 | `unsupported_capability` | using a method/parameter declared false in agentCapabilities (e.g. `amendedInput`, `question/respond`) | No |
+| -32004 | `replay_unavailable` | `replay:false`, or the server has no log to replay at all | No |
+| -32005 | `queue_full` | the pending-input queue exceeds the implementation's cap (**never silently dropped**) | Yes (resend later) |
+| -32006 | `already_initialized` | initialize again on an already-initialized connection (renegotiation requires a reconnect) | No |
+| -32007 | `unknown_interaction` | `approvalId`/`questionId` does not exist, or **answering again with a different decision** an already-final interaction | No |
+| -32008 | `unsupported_protocol_version` | the MAJOR requested by initialize is unsupported (`data.supportedVersions`) | Yes (retry once with another version) |
 
-注：ACP 的 `-32800`（`$/cancel_request`）在 ARI 1.0 不适用——取消是一等方法 `session/cancel`，错误面无需请求级取消码 [06]。
+Note: ACP's `-32800` (`$/cancel_request`) does not apply in ARI 1.0 — cancellation is a first-class method, `session/cancel`, so the error surface needs no request-level cancellation code [06].
 
 ---
 
-# Part E：Examples
+# Part E: Examples
 
-## Example 1 — 极简 Shell 连接 Runtime
+## Example 1 — A minimal Shell connecting to a Runtime
 
 ```
 Shell                          Runtime                        Model/Tools
@@ -403,22 +403,22 @@ Shell                          Runtime                        Model/Tools
   │ initialized (notification)▶│
   │ session/new ───────────────▶│
   │◀──────────────── result ────│
-  │ session/prompt "列出文件" ──▶│──▶ LLM stream
+  │ session/prompt "list files" ─▶│──▶ LLM stream
   │◀──────────── { messageId } ──│
   │◀─ event seq1 session/status running                        │
-  │◀─ event seq2 turn/started {turn:1, messageIds:["m_01JA"]}   │  ← claim 了哪条入队消息
-  │◀─ event seq3 message/delta "我来看一下目录…"                │
-  │◀─ event seq4 tool/started {callId:t1, name:"shell"} ───────▶│ 执行
+  │◀─ event seq2 turn/started {turn:1, messageIds:["m_01JA"]}   │  ← which enqueued messages were claimed
+  │◀─ event seq3 message/delta "Let me look at the directory…"  │
+  │◀─ event seq4 tool/started {callId:t1, name:"shell"} ───────▶│ execute
   │◀─ event seq5 tool/completed {callId:t1, status:"success"} ◀─│
-  │◀─ event seq6 message/delta "目录里有 a.txt, b.md"           │
+  │◀─ event seq6 message/delta "The directory has a.txt, b.md"  │
   │◀─ event seq7 turn/completed {stopReason:"end_turn"}        │
   │◀─ event seq8 session/status idle                            │
 ```
 
-线上一例（每行一个 JSON）：
+An example on the wire (one JSON per line):
 
 ```json
-{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s_01J9","content":[{"type":"text","text":"列出当前目录的文件"}]}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s_01J9","content":[{"type":"text","text":"list the files in the current directory"}]}}
 {"jsonrpc":"2.0","id":3,"result":{"messageId":"m_01JA"}}
 {"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":2,"type":"turn/started","turn":1,"messageIds":["m_01JA"]}}
 {"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":4,"type":"tool/started","turn":1,"callId":"t_01","name":"shell","input":{"command":"ls"}}}
@@ -428,73 +428,73 @@ Shell                          Runtime                        Model/Tools
 ## Example 2 — Approval
 
 ```json
-// Runtime 决定需要批准（工具已流式展示，参数经 callId 关联，不重复——DSH 证据 [01]）
+// The Runtime decides approval is needed (the tool call is already streamed for display; parameters correlate via callId, not duplicated — DSH evidence [01])
 {"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":9,"type":"approval/requested",
  "approvalId":"ap_01","toolCallId":"t_02","toolName":"shell","reason":"command matches rm -rf pattern"}}
-// Shell 答复（三种闭式决策；approvalEditInput capability 下可带 amendedInput）
+// The Shell replies (three closed-form decisions; amendedInput may be attached under the approvalEditInput capability)
 {"jsonrpc":"2.0","id":7,"method":"approval/respond","params":{"sessionId":"s_01J9","approvalId":"ap_01","decision":"allow_once"}}
 {"jsonrpc":"2.0","id":7,"result":{}}
-// 决策终局事件：每个 approval/requested 恰好一条（D9-I7）。Shell 消失/超时/拒绝时 Runtime 自行兜底，
-// 也必须以此收尾（decision:"cancelled"/"expired"）——Codex: 不应答⇒Abort [03]；DSH fail-closed [01]
+// The finality event for the decision: exactly one per approval/requested (D9-I7). If the Shell disappears/times out/declines, the Runtime applies its own fallback,
+// and must still close out this way (decision:"cancelled"/"expired") — Codex: no answer ⇒ Abort [03]; DSH fail-closed [01]
 {"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":10,"type":"approval/resolved","approvalId":"ap_01","decision":"allow_once"}}
-// 工具随后正常结算
+// The tool then settles normally
 {"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":11,"type":"tool/completed","callId":"t_02","status":"error","output":"permission denied"}}
 ```
 
-## Example 3 — Streaming（断线重连 = replay）
+## Example 3 — Streaming (reconnect = replay)
 
 ```json
-// 正常流：delta 序列 + 结算
-{"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":12,"type":"message/delta","turn":1,"text":"目录里有 "}}
-{"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":13,"type":"message/delta","turn":1,"text":"a.txt 和 b.md"}}
-// Shell 崩溃重连：从 seq 12 起 resume —— 服务端回放缺失事件（ZCode watermark [02] / ACP load [06] 语义）
+// Normal stream: delta sequence + settlement
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":12,"type":"message/delta","turn":1,"text":"The directory has "}}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"s_01J9","seq":13,"type":"message/delta","turn":1,"text":"a.txt and b.md"}}
+// The Shell crashes and reconnects: resume from seq 12 — the server replays the missing events (ZCode watermark [02] / ACP load [06] semantics)
 {"jsonrpc":"2.0","id":9,"method":"session/resume","params":{"sessionId":"s_01J9","since":12}}
 {"jsonrpc":"2.0","id":9,"result":{"sessionId":"s_01J9","replayedFrom":12,"nextSeq":14,"events":[
-  {"seq":12,"type":"message/delta","turn":1,"text":"目录里有 "},
-  {"seq":13,"type":"message/delta","turn":1,"text":"a.txt 和 b.md"}]}}
-// 注：若 since 超出保留窗口，server 不报错，而是回 snapshot + 自保留基点起的 events，并以 replayedFrom 标明（D4）
+  {"seq":12,"type":"message/delta","turn":1,"text":"The directory has "},
+  {"seq":13,"type":"message/delta","turn":1,"text":"a.txt and b.md"}]}}
+// Note: if since falls outside the retention window, the server does not error; it returns snapshot + events from the retention baseline, marked by replayedFrom (D4)
 ```
 
-## Example 4 — 两个完全不同的 Runtime 实现 ARI
+## Example 4 — Two very different Runtime implementations of ARI
 
-**（a）DSH → ARI（适配器 ≈ 改信封）**：DSH 已有全部语义，映射近乎一一对应：
+**(a) DSH → ARI (an adapter ≈ changing the envelope)**: DSH already has all the semantics; the mapping is nearly one-to-one:
 
-| ARI 1.0 | DSH 现有机制 [01] |
+| ARI 1.0 | Existing DSH mechanism [01] |
 |---|---|
-| initialize/capabilities | DSH SDK `initialize`（补版本协商——其已知限制） |
-| session/new / resume / prompt(回执) | `agents.create/resume`；SDK `session/prompt`→`messageId` |
-| `event` 通道 | `session.event`（全量 SessionEvent 转发）+ `session.status` |
-| message/delta | `agent/assistant-stream` chunk（远程消费者本就存在） |
-| tool/started|completed | `tool/call` / `tool/result`（meta 原样透传） |
+| initialize/capabilities | DSH SDK `initialize` (adding version negotiation — its known limitation) |
+| session/new / resume / prompt (receipt) | `agents.create/resume`; SDK `session/prompt`→`messageId` |
+| the `event` channel | `session.event` (forwarding the full SessionEvent) + `session.status` |
+| message/delta | `agent/assistant-stream` chunks (remote consumers already exist) |
+| tool/started|completed | `tool/call` / `tool/result` (meta passed through verbatim) |
 | approval/requested ↔ respond | `approval/request` waterfall ↔ remotes/ACP answerer |
 | question ↔ respond | `user-questions/request` waterfall |
-| compaction/performed | `compaction/*` 事件折叠 |
-| turn/completed stopReason | `turn/end.reason`（TurnEndReason） |
+| compaction/performed | `compaction/*` event folding |
+| turn/completed stopReason | `turn/end.reason` (TurnEndReason) |
 
-不动的：compaction 算法、ptc-runtime、工具管线、存储格式——**全部留在 Runtime 内**。
+Unchanged: the compaction algorithm, ptc-runtime, the tool pipeline, the storage format — **all stay inside the Runtime**.
 
-**（b）SimpleAgent → ARI（≈200 行的合规 Runtime）**：无账本、无 compaction、无 subagent：
+**(b) SimpleAgent → ARI (a conformant Runtime in ≈200 lines)**: no ledger, no compaction, no subagents:
 ```jsonc
-// initialize 应答如实声明
+// The initialize response declares truthfully
 {"agentCapabilities":{"reasoning":false,"question":false,"approvalEditInput":false,
                       "usage":false,"compactionEvents":false,"replay":false,
                       "fileChanges":false,"subagents":false,"backgroundTasks":false}}
-// 收到 session/prompt → 回执 messageId，然后发 seq 事件即可：
-// session/status running → turn/started{turn, messageIds:[该 messageId]} → (自行调 LLM/工具，发 message/delta 与 tool/*)
+// On receiving session/prompt → return the messageId receipt, then just emit seq events:
+// session/status running → turn/started{turn, messageIds:[that messageId]} → (call the LLM/tools yourself, emitting message/delta and tool/*)
 // → turn/completed → session/status idle
-// 若中途报错：先 session/error，再 turn/completed{stopReason:"error"}（D9-I3）；cancel 亦然。
-// 不具备的能力一个事件都不发——协议不为 DSH、也不为 SimpleAgent 特制。
+// If an error occurs midway: session/error first, then turn/completed{stopReason:"error"} (D9-I3); likewise for cancel.
+// Emit no events at all for capabilities you lack — the protocol is tailored neither to DSH nor to SimpleAgent.
 ```
-两个实现共享同一份 schema 与同一套验收：**事件 seq 自 1 起连续无空洞**、prompt 回执先于该 turn 事件且可经 `turn/started.messageIds` 关联、**每个 `turn/started` 恰好一条 `turn/completed`（error/cancel 路径亦然，D9-I1/I3）**、每个 `approval/requested` 恰好一条 `approval/resolved`、`session/resume` 后 seq 不重不漏、错误码按 D9.2 返回。
+The two implementations share the same schema and the same acceptance criteria: **event seqs start at 1 and are continuous with no gaps**; the prompt receipt precedes that turn's events and is correlatable via `turn/started.messageIds`; **each `turn/started` gets exactly one `turn/completed` (the error/cancel paths included, D9-I1/I3)**; each `approval/requested` gets exactly one `approval/resolved`; after `session/resume` the seqs have no gaps and no duplicates; error codes are returned per D9.2.
 
 ---
 
-# 附：证据与限制说明
+# Appendix: Evidence and Limitations
 
-- 本地源码：DSH（v0.1.7-alpha.1 @ c36a83ff6b）、codex（openai/codex @ 44b857c00e）、opencode（anomalyco/opencode @ v1.18.32）、ZCode（zai-org/ZCode @ "feat: open source"）、pi-mono 与 agent-client-protocol（浅克隆 @ 调查日）；Gemini CLI 与 claude-agent-sdk 由子调查克隆/npm 获取。
-- **限制（如实记录）**：① Claude Code CLI 闭源，未做二进制审计，协议面取自 npm `sdk.d.ts` + bundle 检查（标注于 [08]）；② ZCode Protocol V4 自述"未冻结"；③ opencode 的 origin 为 anomalyco/opencode（历史 sst/opencode 的现行仓库）；④ ACP 本地 clone 为重构后仓库（schema crate + docs），TS/Rust SDK 在独立仓库（已用 raw fetch 佐证）；⑤ pi-mono 包结构与旧资料不同（无 packages/pi，见 [05]）；⑥ DSH 的 docs/ 为生成并校验的仓库内文档，引用时已标注。
-- 调查期间有 5 个子代理上下文耗尽/中断，均以"增量写盘 + 压缩范围"重试策略完成；全部报告落盘于 `research/`。
+- Local source code: DSH (v0.1.7-alpha.1 @ c36a83ff6b), codex (openai/codex @ 44b857c00e), opencode (anomalyco/opencode @ v1.18.32), ZCode (zai-org/ZCode @ "feat: open source"), pi-mono and agent-client-protocol (shallow clones @ survey date); Gemini CLI and claude-agent-sdk were obtained via clone/npm by the sub-surveys.
+- **Limitations (recorded faithfully)**: ① the Claude Code CLI is closed-source; no binary audit was performed — the protocol surface was taken from the npm `sdk.d.ts` + bundle inspection (noted in [08]); ② ZCode Protocol V4 describes itself as "not frozen"; ③ opencode's origin is anomalyco/opencode (the current repo of the historical sst/opencode); ④ the local ACP clone is the restructured repo (schema crate + docs); the TS/Rust SDKs live in separate repos (corroborated via raw fetch); ⑤ pi-mono's package layout differs from older material (no packages/pi, see [05]); ⑥ DSH's docs/ are generated, verified in-repo documentation, noted as such when cited.
+- During the survey, 5 subagents exhausted their context or were interrupted; all were completed with the retry strategy of "incremental writes to disk + narrowed scope"; all reports were written to disk under `research/`.
 
-## 最终原则自查（对应任务十九条之 1–10）
+## Final principles self-check (items 1–10 of the original task list)
 
-1. 不为 DSH 特制——Example 4(b) 反证；2. 不为 ZCode 特制——同；3. 不复制 ACP——client-tool 反转、turn=响应生命周期、modes 双轨均被明确拒绝（D7）；4. 不复制 MCP——工具不进协议（D7）；5. 不规定 Harness 内部——C4；6. 不规定 Model Provider——initialize 无 provider 字段；7. 不规定 UI——事件是语义不是渲染（meta 不透明）；8. 不规定具体 Tool——B13；9. 不为未来功能提前设计——subagent/background/fork/PTY 全部移出并给出扩展位点（SPEC §12）；10. 可实现性——D8 自检：10 方法 + 21 事件，SimpleAgent 200 行可合规。
+1. Not tailored to DSH — counterexample in Example 4(b); 2. not tailored to ZCode — same; 3. no copying ACP — client-tool inversion, turn=response lifetime, and the dual-track modes are all explicitly rejected (D7); 4. no copying MCP — tools stay out of the protocol (D7); 5. no prescribing Harness internals — C4; 6. no prescribing the Model Provider — initialize has no provider field; 7. no prescribing the UI — events are semantics, not rendering (meta is opaque); 8. no prescribing specific Tools — B13; 9. no designing ahead for future features — subagent/background/fork/PTY are all moved out and extension points are given (SPEC §12); 10. implementability — the D8 self-check: 10 methods + 21 events, and SimpleAgent can conform in 200 lines.
